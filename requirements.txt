@@ -1,0 +1,97 @@
+# Core Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Database
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+alembic==1.13.1
+
+# LangChain Stack - Fixed versions for compatibility
+langsmith>=0.1.0,<0.2.0  # Using a version compatible with langchain-core
+langchain-core>=0.1.0   # Install core first
+langchain>=0.1.4        # Then main package
+langchain-openai==0.0.5
+langchain-community>=0.0.14
+langgraph==0.0.26
+
+# LLM Providers - Free Options
+transformers>=4.38.0  # Updated version for compatibility
+torch>=2.0.0
+
+# Hugging Face Integration
+huggingface-hub>=0.23.0  # Updated for compatibility
+accelerate>=0.25.0  # For faster model loading/inference
+# langchain-huggingface==0.0.1  # Commented out due to dependency conflicts
+
+# Optional: For running larger models locally
+# bitsandbytes==0.41.3  # For 8-bit/4-bit quantization
+# optimum==1.16.1      # For model optimization
+
+# Vector Stores and Embeddings
+chromadb==0.4.22
+sentence-transformers==2.6.0  # Updated to newer version
+tiktoken==0.5.2
+
+# Data Processing
+pandas>=2.1.0
+numpy>=1.25.0
+scikit-learn>=1.3.0
+
+# Web Scraping (for LEGO data collection)
+requests>=2.31.0
+beautifulsoup4==4.12.2
+scrapy==2.11.0
+
+# Data Validation
+pydantic==2.5.2
+pydantic-settings==2.1.0
+
+# Authentication & Security
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+python-multipart==0.0.6
+
+# Environment Management
+python-dotenv==1.0.0
+
+# Logging and Monitoring
+loguru==0.7.2
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio==0.21.1
+httpx==0.25.2
+
+# Development Tools
+black==23.12.1
+flake8==6.1.0
+isort==5.13.2
+pre-commit==3.6.0
+
+# Documentation
+mkdocs==1.5.3
+mkdocs-material==9.4.8
+
+# Jupyter (for data exploration)
+jupyter>=1.0.0
+ipykernel>=6.0.0
+
+# Data Visualization (optional, for development/analysis)
+matplotlib>=3.8.0
+seaborn>=0.13.0
+plotly==5.17.0
+
+# File Processing
+openpyxl==3.1.2
+PyYAML>=6.0.0
+
+# Rate Limiting (for API)
+slowapi==0.1.9
+
+# Background Tasks
+celery==5.3.4
+redis==5.0.1
+
+# Production WSGI Server (alternative to uvicorn)
+gunicorn==21.2.0
