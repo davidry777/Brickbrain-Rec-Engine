@@ -89,7 +89,13 @@ class ContentBasedRecommender:
         self.set_feat['unique_colors'] = self.set_feat['unique_colors'].fillna(0)
         self.set_feat['avg_part_quantity'] = self.set_feat['avg_part_quantity'].fillna(0)
 
-        # TODO: Create feature matrix for similarity calculations
+        # Feature engineering
+        self.set_feat['complexity_score'] = self._calculate_complexity_score()
+        self.set_feat['age_score'] = self._calculate_age_score()
+        self.set_feat['size_category'] = self._categorize_by_size()
+
+        # Create feature matrix for similarity calculations
+        self._create_feature_matrix()
 
         # Creating lookup dictionary
         self.set_lookup = dict(zip(
@@ -97,7 +103,57 @@ class ContentBasedRecommender:
             self.set_feat['set_num']
         ))
 
-        logger.info(f"--------- Prepared features for {len(self.set_features)} sets ---------")
+        logger.info(f"--------- Prepared features for {len(self.set_feat)} sets ---------")
+
+    def _calculate_complexity_score(self) -> pd.Series:
+        """Calculate complexity score based on parts, unique parts, and colors"""
+        complexity = (
+            0.4 * self.set_feat['num_parts'] / self.set_feat['num_parts'].max() +
+            0.3 * self.set_feat['unique_parts'] / self.set_feat['unique_parts'].max() +
+            0.2 * self.set_feat['unique_colors'] / self.set_feat['unique_colors'].max() +
+            0.1 * self.set_feat['avg_part_quantity'] / self.set_feat['avg_part_quantity'].max()
+        )
+        return complexity.fillna(0)
+    
+    def _calculate_age_score(self) -> pd.Series:
+        """Calculate age/vintage score"""
+        current_year = datetime.now().year
+        age = current_year - self.set_feat['year']
+        # Normalize age score (newer sets get higher scores)
+        return 1 - (age / age.max())
+    
+    def _categorize_by_size(self) -> pd.Series:
+        """Categorize sets by size"""
+        def size_category(num_parts):
+            if num_parts < 100:
+                return 'small'
+            elif num_parts < 500:
+                return 'medium'
+            elif num_parts < 1000:
+                return 'large'
+            else:
+                return 'xl'
+        
+        return self.set_feat['num_parts'].apply(size_category)
+
+    def _create_feature_matrix(self):
+        """
+        Create normalized feature matrix for similarity calculations
+        """
+        numeric_feats = [
+            'num_parts', 'unique_parts', 'unique_colors', 
+            'complexity_score', 'age_score', 'theme_id'
+        ]
+        feat_mat = self.set_feat[numeric_feats].copy()
+
+        # Scale numerical features
+        scaled_feats = self.scaler.fit_transform(feat_mat)
+        # Add categorical features (one-hot encoder)
+        size_dummies = pd.get_dummies(self.set_feat['size_category'], prefix='size')
+
+        # Combine all features
+        self.feat_matrix = np.hstack([scaled_feats, size_dummies.values])
+        logger.info(f"Feature matrix shape: {self.feat_matrix.shape}")
 
     def get_similar_sets(self, set_num: str, top_k: int = 10) -> List[RecommendationResult]:
         """
@@ -131,4 +187,31 @@ class ContentBasedRecommender:
             # TODO: Generate reasons for recommendation
 
         return recommendations
+    
+    def _generate_content_reasons(self, similar_set, target_set_num) -> List[str]:
+        """
+        Generate reasons for content-based recommendations
+        """
+        target_set = self.set_feat[self.set_feat['set_num'] == target_set_num].iloc[0]
+        reasons = []
 
+        # Theme similarity
+        if similar_set['theme_id'] == target_set['theme_id']:
+            reasons.append(f"Same theme: {similar_set['theme_name']}")
+        
+        # Size similarity
+        if similar_set['size_category'] == target_set['size_category']:
+            reasons.append(f"Same size category: {similar_set['size_category']}")
+
+        # Complexity similarity
+        complexity_score = abs(similar_set['complexity_score'] - target_set['complexity_score'])
+        if complexity_score < 0.2:  # Threshold for similarity
+            reasons.append("Similar complexity level")
+
+        # Year similarity
+        year_diff = abs(similar_set['year'] - target_set['year'])
+        if year_diff <= 3:  # Threshold for year similarity
+            reasons.append(f"From similar era")
+
+        return reasons
+    
