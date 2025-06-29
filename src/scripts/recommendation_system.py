@@ -466,3 +466,192 @@ class CollaborativeFilteringRecommender:
         except Exception as e:
             logger.error(f"Error getting popular sets: {e}")
             return []
+        
+class HybridRecommender:
+    """
+    Hybrid recommender combining content-based and collaborative filtering.
+    """
+    
+    def __init__(self, dbcon):
+        self.dbcon = dbcon
+        self.content_recommender = ContentBasedRecommender(dbcon)
+        self.collaborative_recommender = CollaborativeFilteringRecommender(dbcon)
+
+        # Weights for combining recommendations
+        self.content_weight = 0.4
+        self.collaborative_weight = 0.6
+
+    def get_recommendations(self, user_id: Optional[int] = None, liked_set: Optional[str] = None, top_k: int = 10) -> List[RecommendationResult]:
+        """
+        Get hybrid recommendations for a user
+
+        :param user_id: The user ID to get recommendations for
+        :param liked_set: A set number that the user likes (for content-based filtering)
+        :param top_k: Number of recommendations to return
+        :return: List of RecommendationResult objects
+        """
+        content_recs = []
+        collaborative_recs = []
+        
+        # Get content-based recommendations
+        if liked_set:
+            content_recs = self.content_recommender.get_similar_sets(liked_set, top_k * 2)
+        
+        # Get collaborative filtering recommendations
+        if user_id:
+            collaborative_recs = self.collaborative_recommender.get_recommendations(user_id, top_k * 2)
+        
+        # If only one type is available, return that
+        if not content_recs and collaborative_recs:
+            return collaborative_recs[:top_k]
+        elif content_recs and not collaborative_recs:
+            return content_recs[:top_k]
+        elif not content_recs and not collaborative_recs:
+            # Cold start - return popular sets
+            return self.collaborative_recommender._get_recent_popular_sets(top_k)
+        
+        # Combine recommendations
+        return self._combine_recommendations(content_recs, collaborative_recs, top_k)
+    
+    def _combine_recommendations(self, content_recs: List[RecommendationResult], collaborative_recs: List[RecommendationResult], top_k: int) -> List[RecommendationResult]:
+        """
+        Combine and rank recommendations from both approaches
+        :param content_recs: Content-based recommendations
+        :param collaborative_recs: Collaborative filtering recommendations
+        :param top_k: Number of recommendations to return
+        :return: Combined and ranked list of RecommendationResult objects
+        """
+        
+        # Create dictionaries for quick lookup
+        content_dict = {rec.set_num: rec for rec in content_recs}
+        collaborative_dict = {rec.set_num: rec for rec in collaborative_recs}
+        
+        # Get all unique set numbers
+        all_sets = set(content_dict.keys()) | set(collaborative_dict.keys())
+        
+        combined_recs = []
+        
+        for set_num in all_sets:
+            content_rec = content_dict.get(set_num)
+            collab_rec = collaborative_dict.get(set_num)
+            
+            # Calculate hybrid score
+            content_score = content_rec.score if content_rec else 0
+            collab_score = collab_rec.score if collab_rec else 0
+            
+            hybrid_score = (
+                self.content_weight * content_score + 
+                self.collaborative_weight * collab_score
+            )
+            
+            # Use the recommendation with more complete information
+            base_rec = content_rec if content_rec else collab_rec
+            
+            # Combine reasons from both approaches
+            reasons = []
+            if content_rec:
+                reasons.extend([f"Content: {reason}" for reason in content_rec.reasons])
+            if collab_rec:
+                reasons.extend([f"Community: {reason}" for reason in collab_rec.reasons])
+            
+            combined_recs.append(RecommendationResult(
+                set_num=set_num,
+                name=base_rec.name,
+                score=hybrid_score,
+                reasons=reasons,
+                theme_name=base_rec.theme_name,
+                year=base_rec.year,
+                num_parts=base_rec.num_parts,
+                img_url=base_rec.img_url
+            ))
+        
+        # Sort by hybrid score and return top k
+        combined_recs.sort(key=lambda x: x.score, reverse=True)
+        return combined_recs[:top_k]
+    
+    def set_weights(self, content_weight: float, collaborative_weight: float):
+        """Adjust weights for combining recommendations"""
+        total_weight = content_weight + collaborative_weight
+        self.content_weight = content_weight / total_weight
+        self.collaborative_weight = collaborative_weight / total_weight
+        
+        logger.info(f"Updated weights - Content: {self.content_weight:.2f}, Collaborative: {self.collaborative_weight:.2f}")
+
+    # Example usage and testing functions
+def test_recommendation_engine(db_connection):
+    """Test the recommendation engine with sample data"""
+    
+    # Initialize hybrid recommender
+    recommender = HybridRecommender(db_connection)
+    
+    # Test content-based recommendations
+    print("Testing Content-Based Recommendations:")
+    print("=" * 50)
+    
+    # Get a sample set to test with
+    sample_query = "SELECT set_num, name FROM sets WHERE num_parts BETWEEN 200 AND 500 LIMIT 1"
+    sample_set = pd.read_sql(sample_query, db_connection)
+    
+    if not sample_set.empty:
+        test_set = sample_set.iloc[0]['set_num']
+        print(f"Finding sets similar to: {sample_set.iloc[0]['name']} ({test_set})")
+        
+        content_recs = recommender.content_recommender.get_similar_sets(test_set, 5)
+        
+        for i, rec in enumerate(content_recs, 1):
+            print(f"{i}. {rec.name} ({rec.set_num})")
+            print(f"   Score: {rec.score:.3f}")
+            print(f"   Theme: {rec.theme_name}")
+            print(f"   Reasons: {', '.join(rec.reasons)}")
+            print()
+    
+    # Test collaborative filtering
+    print("Testing Collaborative Filtering:")
+    print("=" * 50)
+    
+    collab_recs = recommender.collaborative_recommender.get_user_recommendations(1, 5)
+    
+    for i, rec in enumerate(collab_recs, 1):
+        print(f"{i}. {rec.name} ({rec.set_num})")
+        print(f"   Score: {rec.score:.3f}")
+        print(f"   Theme: {rec.theme_name}")
+        print(f"   Reasons: {', '.join(rec.reasons)}")
+        print()
+    
+    # Test hybrid recommendations
+    print("Testing Hybrid Recommendations:")
+    print("=" * 50)
+    
+    if not sample_set.empty:
+        hybrid_recs = recommender.get_hybrid_recommendations(
+            user_id=1, 
+            liked_set=test_set, 
+            top_k=5
+        )
+        
+        for i, rec in enumerate(hybrid_recs, 1):
+            print(f"{i}. {rec.name} ({rec.set_num})")
+            print(f"   Hybrid Score: {rec.score:.3f}")
+            print(f"   Theme: {rec.theme_name}")
+            print(f"   Reasons: {', '.join(rec.reasons)}")
+            print()
+
+if __name__ == "__main__":
+    import psycopg2
+
+    # Database connection parameters
+    db_params = {
+        'dbname': 'brickbrain',
+        'user': 'your_username',
+        'password': 'your_password',
+        'host': 'localhost',
+        'port': '5432'
+    }
+
+    try:
+        connection = psycopg2.connect(**db_params)
+        test_recommendation_engine(connection)
+        connection.close()
+    except Exception as e:
+        print(f"Error connecting to database: {e}")
+        print("Please ensure your PostgreSQL container is running and data is loaded.")
