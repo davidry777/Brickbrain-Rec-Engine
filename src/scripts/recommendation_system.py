@@ -78,7 +78,7 @@ class ContentBasedRecommender:
         LEFT JOIN inventory_parts ip ON i.id = ip.inventory_id
         WHERE s.num_parts > 0
         GROUP BY s.set_num, s.name, s.year, s.theme_id, s.num_parts, s.img_url, t.name, t.parent_id
-        ORDER BY s.set_num
+        ORDER BY s.set_num;
         """
 
         self.set_feat = pd.read_sql(query, self.dbcon)
@@ -183,8 +183,19 @@ class ContentBasedRecommender:
         for i in sim_idxs:
             set_data = self.set_feat.iloc[i]
             score = similarities[i]
+            # Generate reasons for content-based recommendations
+            reasons = self._generate_content_reasons(set_data, set_num)
 
-            # TODO: Generate reasons for recommendation
+            recommendations.append(RecommendationResult(
+                set_num=set_data['set_num'],
+                name=set_data['name'],
+                score=float(score),
+                reasons=reasons,
+                theme_name=set_data['theme_name'],
+                year=int(set_data['year']),
+                num_parts=int(set_data['num_parts']),
+                img_url=set_data['img_url']
+            ))
 
         return recommendations
     
@@ -215,3 +226,243 @@ class ContentBasedRecommender:
 
         return reasons
     
+class CollaborativeFilteringRecommender:
+    """
+    Collaborative filtering using user ratings and preferences.
+    Uses matrix factorization (SVD) for scalable recommendations.
+    """
+    def __init__(self, dbcon):
+        self.dbcon = dbcon
+        self.user_item_matrix = None
+        self.svd_model = None
+        self.user_profiles = {}
+        self.item_lookup = {}
+        self.reverse_user_profiles = {}
+        self.reverse_item_lookup = {}
+
+    def prepare_user_item_matrix(self):
+        """
+        Prepare user-item matrix for collaborative filtering
+        """
+        logger.info("########## Preparing user-item matrix ##########")
+
+        # Temporarily creating synthetic user-item data since no real data is provided
+        # In a real scenario, this would be loaded from the database
+        self._create_synthetic_user_data()
+
+        # Load user ratings
+        query = """
+        SELECT user_id, set_num, rating, interaction_type, created_at
+        FROM user_iteractions
+        WHERE rating IS NOT NULL
+        ORDER BY user_id, set;
+        """
+
+        try:
+            ratings_df = pd.read_sql(query, self.dbcon)
+        except Exception as e:
+            ratings_df = self.synthetic_ratings
+
+        # Create user-item matrix
+        self.user_item_matrix = ratings_df.pivot_table(
+            index='user_id', 
+            columns='set_num', 
+            values='rating', 
+            fill_value=0
+        )
+
+        # Create lookup dictionaries
+        self.user_lookup = {user: idx for idx, user in enumerate(self.user_item_matrix.index)}
+        self.item_lookup = {item: idx for idx, item in enumerate(self.user_item_matrix.columns)}
+        self.reverse_user_lookup = {idx: user for user, idx in self.user_lookup.items()}
+        self.reverse_item_lookup = {idx: item for item, idx in self.item_lookup.items()}
+        
+        logger.info(f"User-item matrix shape: {self.user_item_matrix.shape}")
+        
+    def _create_synthetic_user_data(self):
+        """Create synthetic user data for testing (remove in production)"""
+        np.random.seed(42)
+        
+        # Get some sets from database
+        sets_query = "SELECT set_num FROM sets LIMIT 100"
+        sets_df = pd.read_sql(sets_query, self.db_connection)
+        set_nums = sets_df['set_num'].tolist()
+        
+        # Create synthetic ratings
+        synthetic_data = []
+        for user_id in range(1, 51):  # 50 synthetic users
+            # Each user rates 10-30 sets randomly
+            num_ratings = np.random.randint(10, 31)
+            rated_sets = np.random.choice(set_nums, num_ratings, replace=False)
+            
+            for set_num in rated_sets:
+                rating = np.random.choice([3, 4, 5], p=[0.2, 0.3, 0.5])  # Biased toward positive
+                synthetic_data.append({
+                    'user_id': user_id,
+                    'set_num': set_num,
+                    'rating': rating,
+                    'interaction_type': 'rating',
+                    'created_at': datetime.now()
+                })
+        
+        self.synthetic_ratings = pd.DataFrame(synthetic_data)
+
+    def train_svd_model(self, n_components: int = 50):
+        """
+        Train SVD model for collaborative filtering
+
+        :param n_components: Number of latent factors
+        """
+        if self.user_item_matrix is None:
+            self.prepare_user_item_matrix()
+
+        logger.info("########## Training SVD model ##########")
+        
+        # Create SVD model
+        self.svd_model = TruncatedSVD(n_components=n_components, random_state=42)
+        
+        # Fit the model
+        user_factors = self.svd_model.fit_transform(self.user_item_matrix)
+        item_factors = self.svd_model.components_.T
+        
+        # Store factors for later use
+        self.user_factors = user_factors
+        self.item_factors = item_factors
+
+        logger.info(f"Trained SVD model with {n_components} components")
+
+    def get_recommendations(self, user_id: str, top_k: int = 10) -> List[RecommendationResult]:
+        """
+        Get recommendations for a user based on collaborative filtering
+
+        :param user_id: The user ID to get recommendations for
+        :param top_k: Number of recommendations to return
+        :return: List of RecommendationResult objects
+        """
+        if self.svd_model is None:
+            self.train_svd_model()
+
+        if user_id not in self.user_lookup:
+            logger.warning(f"User {user_id} not found in user lookup")
+            return self._cold_start_recommendations(top_k)
+
+        user_idx = self.user_lookup[user_id]
+        
+        # Get user's latent factors
+        user_factors = self.user_factors[user_idx].reshape(1, -1)
+        
+        # Calculate scores for all items
+        scores = np.dot(user_factors, self.item_factors).flatten()
+        
+        # Get top K item indices
+        top_indices = np.argsort(scores)[::-1][:top_k]
+        
+        recommendations = []
+        for idx in top_indices:
+            set_num = self.reverse_item_lookup[idx]
+            score = scores[idx]
+            reasons = [f"Recommended based on collaborative filtering with score {score:.2f}"]
+            
+            # Fetch set details from database
+            set_query = f"SELECT * FROM sets WHERE set_num = '{set_num}'"
+            set_data = pd.read_sql(set_query, self.dbcon).iloc[0]
+            
+            recommendations.append(RecommendationResult(
+                set_num=set_data['set_num'],
+                name=set_data['name'],
+                score=float(score),
+                reasons=reasons,
+                theme_name=set_data['theme_name'],
+                year=int(set_data['year']),
+                num_parts=int(set_data['num_parts']),
+                img_url=set_data['img_url']
+            ))
+
+        return recommendations
+    
+    def _cold_start_recommendations(self, top_k: int) -> List[RecommendationResult]:
+        """Handle cold start problem for new users"""
+        # Recommend popular items (highest average ratings)
+        popular_query = """
+        SELECT s.set_num, s.name, s.year, s.num_parts, s.img_url, t.name as theme_name,
+               AVG(ui.rating) as avg_rating, COUNT(ui.rating) as rating_count
+        FROM sets s
+        LEFT JOIN themes t ON s.theme_id = t.id
+        LEFT JOIN user_interactions ui ON s.set_num = ui.set_num
+        WHERE ui.rating IS NOT NULL
+        GROUP BY s.set_num, s.name, s.year, s.num_parts, s.img_url, t.name
+        HAVING COUNT(ui.rating) >= 5
+        ORDER BY avg_rating DESC, rating_count DESC
+        LIMIT %s
+        """
+        
+        try:
+            popular_sets = pd.read_sql(popular_query, self.db_connection, params=[top_k])
+            recommendations = []
+            
+            for _, row in popular_sets.iterrows():
+                recommendations.append(RecommendationResult(
+                    set_num=row['set_num'],
+                    name=row['name'],
+                    score=float(row['avg_rating']),
+                    reasons=[f"Popular choice (avg rating: {row['avg_rating']:.1f})"],
+                    theme_name=row['theme_name'],
+                    year=int(row['year']),
+                    num_parts=int(row['num_parts']),
+                    img_url=row['img_url']
+                ))
+                
+            return recommendations
+        except:
+            # Fallback to recent popular sets
+            return self._get_recent_popular_sets(top_k)
+    
+    def _get_set_details(self, set_num: str) -> Optional[Dict]:
+        """Get set details from database"""
+        query = """
+        SELECT s.name, s.year, s.num_parts, s.img_url, t.name as theme_name
+        FROM sets s
+        LEFT JOIN themes t ON s.theme_id = t.id
+        WHERE s.set_num = %s
+        """
+        
+        try:
+            result = pd.read_sql(query, self.db_connection, params=[set_num])
+            if not result.empty:
+                return result.iloc[0].to_dict()
+        except Exception as e:
+            logger.error(f"Error getting set details for {set_num}: {e}")
+        
+        return None
+    
+    def _get_recent_popular_sets(self, top_k: int) -> List[RecommendationResult]:
+        """Fallback method to get recent popular sets"""
+        query = """
+        SELECT s.set_num, s.name, s.year, s.num_parts, s.img_url, t.name as theme_name
+        FROM sets s
+        LEFT JOIN themes t ON s.theme_id = t.id
+        WHERE s.year >= 2020 AND s.num_parts BETWEEN 100 AND 1000
+        ORDER BY s.year DESC, s.num_parts DESC
+        LIMIT %s
+        """
+        
+        try:
+            popular_sets = pd.read_sql(query, self.db_connection, params=[top_k])
+            recommendations = []
+            
+            for _, row in popular_sets.iterrows():
+                recommendations.append(RecommendationResult(
+                    set_num=row['set_num'],
+                    name=row['name'],
+                    score=0.8,  # Default score
+                    reasons=["Popular recent set"],
+                    theme_name=row['theme_name'] or 'Unknown',
+                    year=int(row['year']),
+                    num_parts=int(row['num_parts']),
+                    img_url=row['img_url']
+                ))
+                
+            return recommendations
+        except Exception as e:
+            logger.error(f"Error getting popular sets: {e}")
+            return []
