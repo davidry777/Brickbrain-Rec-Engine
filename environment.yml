@@ -28,11 +28,10 @@ dependencies:
     - psycopg2-binary==2.9.9
     - alembic==1.13.1
     
-    # LangChain Stack - Fixed versions for compatibility
-    # Updated to solve the dependency conflict
-    - langsmith>=0.1.0,<0.2.0  # Using a version compatible with langchain-core
-    - langchain-core>=0.1.0   # Install core first
-    - langchain>=0.1.4        # Then main package
+    # LangChain Stack
+    - langsmith>=0.1.0,<0.2.0
+    - langchain-core>=0.1.0
+    - langchain>=0.1.4
     - langchain-openai==0.0.5
     - langchain-community>=0.0.14
     - langgraph==0.0.26

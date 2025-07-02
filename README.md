@@ -35,33 +35,45 @@ data/
 
 ## 🚀 Quick Start
 
-### 1. Setup Database
+### 1. Start the Complete System
 ```bash
-# Start PostgreSQL
+# Start PostgreSQL and Application containers
 docker-compose up -d
 
-# Load LEGO data (25K+ sets)
-./reset_db.sh
+# This automatically:
+# - Starts PostgreSQL database
+# - Creates conda environment with all dependencies
+# - Starts the FastAPI server on http://localhost:8000
 ```
 
-### 2. Start API Service
+### 2. Load LEGO Data (25K+ sets)
 ```bash
-python src/scripts/recommendation_api.py
+# Reset database and load all LEGO data
+./reset_db.sh
 ```
 
 ### 3. Test the System
 ```bash
-# Quick validation
-./run_tests.sh
+# Run all tests inside the container
+docker exec brickbrain-app bash /app/run_tests.sh
 
-# Or run specific tests
-python tests/integration/production_test_simple.py
+# Run with performance and examples
+docker exec brickbrain-app bash /app/run_tests.sh --all
+
+# Or run specific tests inside container
+docker exec brickbrain-app conda run -n brickbrain-rec python /app/tests/integration/production_test_simple.py
 ```
 
 ### 4. Try the Demo
 ```bash
-python examples/example_client.py
+# Run the example client
+docker exec brickbrain-app conda run -n brickbrain-rec python /app/examples/example_client.py
 ```
+
+### 5. Access the API
+- **API Health**: http://localhost:8000/health
+- **Interactive Docs**: http://localhost:8000/docs
+- **Alternative Docs**: http://localhost:8000/redoc
 
 ## 📋 API Endpoints
 
@@ -86,21 +98,43 @@ python examples/example_client.py
 
 ## 🧪 Testing
 
-The system includes comprehensive test coverage:
+The system includes comprehensive test coverage with Docker integration:
 
 ```bash
-# Run all tests
-./run_tests.sh
+# Run all tests in the container
+docker exec brickbrain-app bash /app/run_tests.sh
 
 # Run specific test categories
-./run_tests.sh --performance  # Include load testing
-./run_tests.sh --all          # Everything including examples
+docker exec brickbrain-app bash /app/run_tests.sh --performance  # Include load testing
+docker exec brickbrain-app bash /app/run_tests.sh --all          # Everything including examples
 
-# Individual test suites
-python tests/unit/test_database.py           # Database connectivity
-python tests/unit/test_recommendations.py    # ML algorithms
-python tests/integration/final_validation.py # Complete API validation
-python tests/performance/production_scalability_test.py # Load testing
+# Individual test suites (run inside container)
+docker exec brickbrain-app conda run -n brickbrain-rec python /app/tests/unit/test_database.py
+docker exec brickbrain-app conda run -n brickbrain-rec python /app/tests/unit/test_recommendations.py
+docker exec brickbrain-app conda run -n brickbrain-rec python /app/tests/integration/final_validation.py
+docker exec brickbrain-app conda run -n brickbrain-rec python /app/tests/performance/production_scalability_test.py
+
+# Alternative: Run from host (if you have dependencies installed locally)
+./run_tests.sh
+```
+
+### 🐳 Docker Commands
+
+```bash
+# Start the system
+docker-compose up -d
+
+# Check container status
+docker ps
+
+# View API logs
+docker logs brickbrain-app
+
+# Access container shell
+docker exec -it brickbrain-app bash
+
+# Stop the system
+docker-compose down
 ```
 
 ## 📊 Recommendation Types
@@ -158,22 +192,54 @@ python tests/performance/production_scalability_test.py # Load testing
 - **Backend**: FastAPI, Python 3.10+
 - **Database**: PostgreSQL with optimized schemas
 - **ML/AI**: Scikit-learn, Pandas, NumPy
+- **Environment**: Conda with comprehensive dependency management
+- **Containerization**: Docker & Docker Compose
 - **Testing**: Comprehensive unit/integration/performance tests
 - **Data**: Official Rebrickable LEGO database
-- **Deployment**: Docker, environment-based configuration
+- **Deployment**: Production-ready containerized setup
+
+## 🐳 Docker Architecture
+
+```yaml
+services:
+  postgres:     # PostgreSQL database
+  app:          # Python/Conda environment with FastAPI
+```
+
+The system uses:
+- **Conda Environment**: `brickbrain-rec` with all ML dependencies
+- **Persistent Volumes**: Database and conda environments
+- **Health Checks**: Automatic container health monitoring
+- **Environment Variables**: Flexible configuration
 
 ## 📝 Configuration
 
-Environment variables:
-```bash
-DB_HOST=localhost
+The system uses Docker Compose with environment variables:
+
+```yaml
+# docker-compose.yml automatically sets:
+DB_HOST=postgres           # Container name for database
 DB_PORT=5432
 DB_NAME=brickbrain
 DB_USER=brickbrain
 DB_PASSWORD=brickbrain_password
 ```
 
+### Container Access
+```bash
+# Access the application container
+docker exec -it brickbrain-app bash
+
+# Run commands in the conda environment
+docker exec brickbrain-app conda run -n brickbrain-rec python --version
+
+# Check available packages
+docker exec brickbrain-app conda list -n brickbrain-rec
+```
+
 ## 🤝 API Usage Examples
+
+The API runs in Docker and is accessible at `http://localhost:8000`:
 
 ### Get Recommendations
 ```python
@@ -214,6 +280,15 @@ response = requests.post("http://localhost:8000/search/sets", json={
 })
 ```
 
+### Test the API
+```bash
+# Quick health check
+curl http://localhost:8000/health
+
+# Run the example client from container
+docker exec brickbrain-app conda run -n brickbrain-rec python /app/examples/example_client.py
+```
+
 ## 🏆 System Status
 
 **🎉 PRODUCTION READY!**
@@ -243,3 +318,55 @@ The system successfully handles:
 ---
 
 **Built with ❤️ for LEGO enthusiasts everywhere**
+
+## 🔧 Troubleshooting
+
+### Common Issues and Solutions
+
+**Container won't start:**
+```bash
+# Check if ports are in use
+docker ps -a
+lsof -i :5432  # PostgreSQL
+lsof -i :8000  # FastAPI
+
+# Restart the system
+docker-compose down
+docker-compose up -d
+```
+
+**Tests fail with "module not found":**
+```bash
+# Ensure you're using the container environment
+docker exec brickbrain-app conda run -n brickbrain-rec python --version
+
+# Check conda environment exists
+docker exec brickbrain-app conda env list
+```
+
+**Database connection issues:**
+```bash
+# Check PostgreSQL container health
+docker exec brickbrain-postgres pg_isready -U brickbrain
+
+# Reset database if needed
+./reset_db.sh
+```
+
+**API not responding:**
+```bash
+# Check API container logs
+docker logs brickbrain-app
+
+# Check API health
+curl http://localhost:8000/health
+```
+
+**Performance issues:**
+```bash
+# Check container resources
+docker stats
+
+# Monitor API performance
+docker exec brickbrain-app conda run -n brickbrain-rec python /app/tests/performance/production_scalability_test.py
+```

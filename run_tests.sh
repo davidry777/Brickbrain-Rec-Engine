@@ -58,7 +58,18 @@ if ! docker ps > /dev/null 2>&1; then
 fi
 
 # Check if API is running
-if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+# Try to check API with different methods depending on environment
+if [ -f "/opt/conda/envs/brickbrain-rec/bin/python" ]; then
+    # We're in the container, use python to check
+    if conda run -n brickbrain-rec python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" > /dev/null 2>&1; then
+        echo -e "${GREEN}✅ API is running${NC}"
+        API_RUNNING=true
+    else
+        echo -e "${YELLOW}⚠️  API not running. Integration tests will be skipped.${NC}"
+        API_RUNNING=false
+    fi
+elif curl -s http://localhost:8000/health > /dev/null 2>&1; then
+    # We're on the host, use curl
     echo -e "${GREEN}✅ API is running${NC}"
     API_RUNNING=true
 else
@@ -70,8 +81,15 @@ fi
 echo -e "\n🔧 UNIT TESTS"
 echo "=============="
 cd tests/unit
-run_test "Database Tests" "python test_database.py" "Unit Test"
-run_test "Recommendation Tests" "python test_recommendations.py" "Unit Test"
+
+# Check if we're in a conda environment, if so use conda run
+if [ -n "$CONDA_DEFAULT_ENV" ] || [ -f "/opt/conda/envs/brickbrain-rec/bin/python" ]; then
+    run_test "Database Tests" "conda run -n brickbrain-rec python test_database.py" "Unit Test"
+    run_test "Recommendation Tests" "conda run -n brickbrain-rec python test_recommendations.py" "Unit Test"
+else
+    run_test "Database Tests" "python test_database.py" "Unit Test"
+    run_test "Recommendation Tests" "python test_recommendations.py" "Unit Test"
+fi
 cd ../..
 
 # Integration Tests (only if API is running)
@@ -79,9 +97,17 @@ if [ "$API_RUNNING" = true ]; then
     echo -e "\n🔗 INTEGRATION TESTS"
     echo "===================="
     cd tests/integration
-    run_test "Simple Production Test" "python production_test_simple.py" "Integration Test"
-    run_test "Final Validation" "python final_validation.py" "Integration Test"
-    run_test "Production Readiness" "python validate_production_readiness.py" "Integration Test"
+    
+    # Check if we're in a conda environment
+    if [ -n "$CONDA_DEFAULT_ENV" ] || [ -f "/opt/conda/envs/brickbrain-rec/bin/python" ]; then
+        run_test "Simple Production Test" "conda run -n brickbrain-rec python production_test_simple.py" "Integration Test"
+        run_test "Final Validation" "conda run -n brickbrain-rec python final_validation.py" "Integration Test"
+        run_test "Production Readiness" "conda run -n brickbrain-rec python validate_production_readiness.py" "Integration Test"
+    else
+        run_test "Simple Production Test" "python production_test_simple.py" "Integration Test"
+        run_test "Final Validation" "python final_validation.py" "Integration Test"
+        run_test "Production Readiness" "python validate_production_readiness.py" "Integration Test"
+    fi
     cd ../..
 else
     echo -e "\n🔗 INTEGRATION TESTS"
@@ -94,7 +120,13 @@ if [ "$1" = "--performance" ] || [ "$1" = "--all" ]; then
     echo -e "\n⚡ PERFORMANCE TESTS"
     echo "===================="
     cd tests/performance
-    run_test "Scalability Test" "python production_scalability_test.py" "Performance Test"
+    
+    # Check if we're in a conda environment
+    if [ -n "$CONDA_DEFAULT_ENV" ] || [ -f "/opt/conda/envs/brickbrain-rec/bin/python" ]; then
+        run_test "Scalability Test" "conda run -n brickbrain-rec python production_scalability_test.py" "Performance Test"
+    else
+        run_test "Scalability Test" "python production_scalability_test.py" "Performance Test"
+    fi
     cd ../..
 else
     echo -e "\n⚡ PERFORMANCE TESTS"
@@ -107,7 +139,13 @@ if [ "$API_RUNNING" = true ] && ([ "$1" = "--examples" ] || [ "$1" = "--all" ]);
     echo -e "\n📱 EXAMPLES"
     echo "==========="
     cd examples
-    run_test "Example Client" "python example_client.py" "Example"
+    
+    # Check if we're in a conda environment
+    if [ -n "$CONDA_DEFAULT_ENV" ] || [ -f "/opt/conda/envs/brickbrain-rec/bin/python" ]; then
+        run_test "Example Client" "conda run -n brickbrain-rec python example_client.py" "Example"
+    else
+        run_test "Example Client" "python example_client.py" "Example"
+    fi
     cd ..
 else
     echo -e "\n📱 EXAMPLES"

@@ -699,14 +699,15 @@ def test_recommendation_engine(db_connection):
 
 if __name__ == "__main__":
     import psycopg2
+    import os
 
     # Database connection parameters
     DB_PARAMS = {
-        'dbname': 'brickbrain',
-        'user': 'brickbrain',
-        'password': 'brickbrain_password',
-        'host': 'localhost',
-        'port': '5432'
+        'dbname': os.environ.get('DB_NAME', 'brickbrain'),
+        'user': os.environ.get('DB_USER', 'brickbrain'),
+        'password': os.environ.get('DB_PASSWORD', 'brickbrain_password'),
+        'host': os.environ.get('DB_HOST', 'localhost'),
+        'port': os.environ.get('DB_PORT', '5432')
     }
 
     try:

@@ -17,5 +17,39 @@ services:
       timeout: 5s
       retries: 5
 
+  app:
+    image: continuumio/miniconda3:latest
+    container_name: brickbrain-app
+    working_dir: /app
+    volumes:
+      - .:/app
+      - conda_envs:/opt/conda/envs
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DB_HOST=postgres
+      - DB_NAME=brickbrain
+      - DB_USER=brickbrain
+      - DB_PASSWORD=brickbrain_password
+      - DB_PORT=5432
+    command: |
+      bash -c "
+        if ! conda env list | grep -q brickbrain-rec; then
+          conda env create -f environment.yml -n brickbrain-rec
+        fi &&
+        conda run -n brickbrain-rec python src/scripts/recommendation_api.py
+      "
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\")' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
 volumes:
   postgres_data:
+  conda_envs:

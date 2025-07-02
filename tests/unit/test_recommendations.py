@@ -302,7 +302,11 @@ class RecommendationSystemTester:
         print(f"📊 Avg ratings per user: {user_stats['avg_ratings_per_user']:.1f}")
         print(f"🎯 Total interactions: {interaction_stats['total_interactions']}")
         print(f"📦 Set coverage: {coverage_stats['coverage_percent']}% ({coverage_stats['rated_sets']}/{coverage_stats['total_sets']})")
-        print(f"⭐ Average rating: {interaction_stats['avg_rating']:.2f}")
+        avg_rating = interaction_stats['avg_rating']
+        if avg_rating is not None:
+            print(f"⭐ Average rating: {avg_rating:.2f}")
+        else:
+            print("⭐ Average rating: No ratings data available")
         
         # Recommendations for production
         print("\n💡 Production Recommendations:")

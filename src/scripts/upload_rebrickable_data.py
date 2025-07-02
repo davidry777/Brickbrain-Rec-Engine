@@ -13,11 +13,11 @@ logger = logging.getLogger()
 
 # Database connection parameters
 DB_PARAMS = {
-    "host": "localhost",
-    "database": "brickbrain",
-    "user": "brickbrain",
-    "password": "brickbrain_password",
-    "port": 5432
+    "host": os.environ.get("DB_HOST", "localhost"),
+    "database": os.environ.get("DB_NAME", "brickbrain"),
+    "user": os.environ.get("DB_USER", "brickbrain"),
+    "password": os.environ.get("DB_PASSWORD", "brickbrain_password"),
+    "port": int(os.environ.get("DB_PORT", "5432"))
 }
 
 # Path to data files
