@@ -167,8 +167,8 @@ class ContentBasedRecommender:
             self.prepare_features()
 
         try:
-            target_idx = self.set_feat[self.set_feat['set_num'] == set_num]
-        except IndexError:
+            target_idx = self.set_feat[self.set_feat['set_num'] == set_num].index[0]
+        except (IndexError, KeyError):
             logger.error(f"Set {set_num} not found")
             return []
         
@@ -253,14 +253,23 @@ class CollaborativeFilteringRecommender:
         # Load user ratings
         query = """
         SELECT user_id, set_num, rating, interaction_type, created_at
-        FROM user_iteractions
+        FROM user_interactions
         WHERE rating IS NOT NULL
-        ORDER BY user_id, set;
+        ORDER BY user_id, set_num;
         """
 
         try:
             ratings_df = pd.read_sql(query, self.dbcon)
+            
+            # If no real user data, use synthetic data for testing
+            if ratings_df.empty:
+                logger.info("No user rating data found, creating synthetic data for testing")
+                ratings_df = self.synthetic_ratings
+            else:
+                logger.info(f"Loaded {len(ratings_df)} user ratings from database")
+                
         except Exception as e:
+            logger.warning(f"Error loading user ratings: {e}, using synthetic data")
             ratings_df = self.synthetic_ratings
 
         # Create user-item matrix
@@ -285,7 +294,7 @@ class CollaborativeFilteringRecommender:
         
         # Get some sets from database
         sets_query = "SELECT set_num FROM sets LIMIT 100"
-        sets_df = pd.read_sql(sets_query, self.db_connection)
+        sets_df = pd.read_sql(sets_query, self.dbcon)
         set_nums = sets_df['set_num'].tolist()
         
         # Create synthetic ratings
@@ -318,6 +327,25 @@ class CollaborativeFilteringRecommender:
 
         logger.info("########## Training SVD model ##########")
         
+        # Check if we have enough data for SVD
+        min_users = 3
+        min_items = 3
+        
+        if self.user_item_matrix.shape[0] < min_users or self.user_item_matrix.shape[1] < min_items:
+            logger.warning(f"Insufficient data for SVD: {self.user_item_matrix.shape}. Need at least {min_users} users and {min_items} items.")
+            # Use simple fallback instead of SVD
+            self.svd_model = None
+            return
+        
+        # Adjust n_components based on available data
+        max_components = min(self.user_item_matrix.shape) - 1
+        n_components = min(n_components, max_components)
+        
+        if n_components < 2:
+            logger.warning("Not enough components for SVD, using fallback recommendations")
+            self.svd_model = None
+            return
+        
         # Create SVD model
         self.svd_model = TruncatedSVD(n_components=n_components, random_state=42)
         
@@ -342,6 +370,11 @@ class CollaborativeFilteringRecommender:
         if self.svd_model is None:
             self.train_svd_model()
 
+        # If SVD model couldn't be trained, use fallback
+        if self.svd_model is None:
+            logger.info("Using fallback recommendations due to insufficient data")
+            return self._cold_start_recommendations(top_k)
+
         if user_id not in self.user_lookup:
             logger.warning(f"User {user_id} not found in user lookup")
             return self._cold_start_recommendations(top_k)
@@ -352,31 +385,39 @@ class CollaborativeFilteringRecommender:
         user_factors = self.user_factors[user_idx].reshape(1, -1)
         
         # Calculate scores for all items
-        scores = np.dot(user_factors, self.item_factors).flatten()
+        scores = np.dot(user_factors, self.item_factors.T).flatten()
         
-        # Get top K item indices
-        top_indices = np.argsort(scores)[::-1][:top_k]
+        # Get top K item indices (excluding items user has already rated)
+        user_rated_items = self.user_item_matrix.iloc[user_idx]
+        rated_indices = user_rated_items[user_rated_items > 0].index
+        
+        # Get item scores and filter out already rated items
+        item_scores = [(idx, scores[idx]) for idx in range(len(scores)) 
+                      if self.reverse_item_lookup[idx] not in rated_indices]
+        
+        # Sort by score and get top K
+        item_scores.sort(key=lambda x: x[1], reverse=True)
+        top_indices = [idx for idx, _ in item_scores[:top_k]]
         
         recommendations = []
         for idx in top_indices:
             set_num = self.reverse_item_lookup[idx]
             score = scores[idx]
-            reasons = [f"Recommended based on collaborative filtering with score {score:.2f}"]
+            reasons = [f"Users with similar preferences also liked this set"]
             
-            # Fetch set details from database
-            set_query = f"SELECT * FROM sets WHERE set_num = '{set_num}'"
-            set_data = pd.read_sql(set_query, self.dbcon).iloc[0]
-            
-            recommendations.append(RecommendationResult(
-                set_num=set_data['set_num'],
-                name=set_data['name'],
-                score=float(score),
-                reasons=reasons,
-                theme_name=set_data['theme_name'],
-                year=int(set_data['year']),
-                num_parts=int(set_data['num_parts']),
-                img_url=set_data['img_url']
-            ))
+            # Get set details
+            set_details = self._get_set_details(set_num)
+            if set_details:
+                recommendations.append(RecommendationResult(
+                    set_num=set_details['set_num'],
+                    name=set_details['name'],
+                    score=float(score),
+                    reasons=reasons,
+                    theme_name=set_details['theme_name'],
+                    year=int(set_details['year']),
+                    num_parts=int(set_details['num_parts']),
+                    img_url=set_details['img_url']
+                ))
 
         return recommendations
     
@@ -397,7 +438,26 @@ class CollaborativeFilteringRecommender:
         """
         
         try:
-            popular_sets = pd.read_sql(popular_query, self.db_connection, params=[top_k])
+            popular_sets = pd.read_sql(popular_query, self.dbcon, params=[top_k])
+            
+            recommendations = []
+            for _, row in popular_sets.iterrows():
+                recommendations.append(RecommendationResult(
+                    set_num=row['set_num'],
+                    name=row['name'],
+                    score=float(row['avg_rating']),
+                    reasons=[f"Popular set with {row['rating_count']} ratings"],
+                    theme_name=row['theme_name'],
+                    year=int(row['year']),
+                    num_parts=int(row['num_parts']),
+                    img_url=row['img_url']
+                ))
+            
+            return recommendations
+            
+        except Exception as e:
+            logger.error(f"Error getting popular recommendations: {e}")
+            return self._get_recent_popular_sets(top_k)
             recommendations = []
             
             for _, row in popular_sets.iterrows():
@@ -419,22 +479,21 @@ class CollaborativeFilteringRecommender:
     
     def _get_set_details(self, set_num: str) -> Optional[Dict]:
         """Get set details from database"""
-        query = """
-        SELECT s.name, s.year, s.num_parts, s.img_url, t.name as theme_name
-        FROM sets s
-        LEFT JOIN themes t ON s.theme_id = t.id
-        WHERE s.set_num = %s
-        """
-        
         try:
-            result = pd.read_sql(query, self.db_connection, params=[set_num])
+            query = """
+            SELECT s.set_num, s.name, s.year, s.num_parts, s.img_url, t.name as theme_name
+            FROM sets s
+            LEFT JOIN themes t ON s.theme_id = t.id
+            WHERE s.set_num = %s
+            """
+            result = pd.read_sql(query, self.dbcon, params=[set_num])
             if not result.empty:
                 return result.iloc[0].to_dict()
+            return None
         except Exception as e:
             logger.error(f"Error getting set details for {set_num}: {e}")
-        
-        return None
-    
+            return None
+
     def _get_recent_popular_sets(self, top_k: int) -> List[RecommendationResult]:
         """Fallback method to get recent popular sets"""
         query = """
@@ -447,7 +506,7 @@ class CollaborativeFilteringRecommender:
         """
         
         try:
-            popular_sets = pd.read_sql(query, self.db_connection, params=[top_k])
+            popular_sets = pd.read_sql(query, self.dbcon, params=[top_k])
             recommendations = []
             
             for _, row in popular_sets.iterrows():
@@ -464,6 +523,8 @@ class CollaborativeFilteringRecommender:
                 
             return recommendations
         except Exception as e:
+            logger.error(f"Error getting recent popular sets: {e}")
+            return []
             logger.error(f"Error getting popular sets: {e}")
             return []
         
@@ -640,16 +701,16 @@ if __name__ == "__main__":
     import psycopg2
 
     # Database connection parameters
-    db_params = {
+    DB_PARAMS = {
         'dbname': 'brickbrain',
-        'user': 'your_username',
-        'password': 'your_password',
+        'user': 'brickbrain',
+        'password': 'brickbrain_password',
         'host': 'localhost',
         'port': '5432'
     }
 
     try:
-        connection = psycopg2.connect(**db_params)
+        connection = psycopg2.connect(**DB_PARAMS)
         test_recommendation_engine(connection)
         connection.close()
     except Exception as e:
