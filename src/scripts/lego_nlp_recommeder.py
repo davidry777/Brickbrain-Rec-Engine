@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class NLQueryResult:
-    """"Result from natural language query processing"""
+    """Result from natural language query processing"""
     intent: str
     filters: Dict[str, Any]
     confidence: float
@@ -183,4 +183,20 @@ class NLPRecommender:
             desc_parts.append("moderate complexity suitable for most builders")
         
         return ". ".join(desc_parts)
+    
+    def _estimate_complexity(self, row) -> str:
+        """
+        Estimate the complexity of a LEGO set based on its metadata.
+
+        :param row: DataFrame row containing LEGO set metadata
+        :return: Complexity level as 'simple', 'moderate', or 'complex'
+        """
+        colors = row['num_colors'] if pd.notna(row['num_colors']) else 0
+
+        if row['num_parts'] < 100 or colors < 5:
+            return 'simple'
+        elif row['num_parts'] > 1000 or colors > 20:
+            return 'complex'
+        else:
+            return 'moderate'
 
