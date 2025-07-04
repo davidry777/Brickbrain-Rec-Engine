@@ -1,11 +1,11 @@
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
 from contextlib import contextmanager
 import asyncio
