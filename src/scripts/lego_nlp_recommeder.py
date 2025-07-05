@@ -199,4 +199,41 @@ class NLPRecommender:
             return 'complex'
         else:
             return 'moderate'
+        
+    def process_nl_query(self, query: str, user_context: Optional[Dict]) -> NLQueryResult:
+        """
+        Process a natural language query to extract intent, filters, and semantic query.
 
+        :param query: Natural language query string
+        :param user_context: Optional user context for personalized recommendations
+        :return: NLQueryResult containing intent, filters, confidence, entities, and semantic query
+        """
+        # Detect Intent
+        intent = self._detect_intent(query)
+
+        # TODO Extract filters and entities
+
+        # TODO: Create semantic query for embediing search
+
+    def _detect_intent(self, query: str) -> str:
+        """
+        Detect the intent of the user's query based on predefined intents.
+
+        :param query: Natural language query string
+        :return: Detected intent as a string
+        """        
+        for intent, keywords in self.intents.items():
+            if any(keyword in query.lower() for keyword in keywords):
+                return intent
+            
+        return 'search'
+    
+    def _extract_filters_llm(self, query: str) -> Dict[str, Any]:
+        """
+        Extract search filters using LLM.
+
+        :param query: Natural language query string
+        :return: SearchFilters object with extracted filters
+        """
+        if not self.llm:
+            # TODO: Implement local filter extraction logic
