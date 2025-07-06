@@ -12,11 +12,12 @@ from langchain.embeddings import OpenAIEmbeddings, HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import Chroma, FAISS
 from langchain.schema import Document
-from langchain.chains import RetrievalQA, LLMChain
-from langchain.chat_models import ChatOpenAI
+from langchain.chains.llm import LLMChain
+from langchain.chains.retrieval_qa.base import RetrievalQA
+from langchain_openai.chat_models.base import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.callbacks import get_openai_callback
-from langchain.output_parsers import PydanticToolsParser, OutputFixingParser
+from langchain.output_parsers import PydanticOutputParser, OutputFixingParser
 from pydantic import BaseModel, Field
 
 # For local embeddings (no API required)
@@ -212,8 +213,23 @@ class NLPRecommender:
         intent = self._detect_intent(query)
 
         # TODO Extract filters and entities
+        if self.llm:
+            filters = self._extract_filters_llm(query)
+            entities = self._extract_entities_llm(query)
+        else:
+            filters = self._extract_filters_regex(query)
+            entities = self._extract_entities_regex(query)
 
         # TODO: Create semantic query for embediing search
+        semantic_query = self._create_semantic_query(query, filters, entities)
+
+        return NLQueryResult(
+            intent=intent,
+            filters=filters,
+            confidence=0.85,
+            extracted_entities=entities,
+            semantic_query=semantic_query
+        )
 
     def _detect_intent(self, query: str) -> str:
         """
@@ -235,5 +251,285 @@ class NLPRecommender:
         :param query: Natural language query string
         :return: SearchFilters object with extracted filters
         """
+        # Implement local filter extraction logic
         if not self.llm:
-            # TODO: Implement local filter extraction logic
+            return self._extract_filters_regex(query)
+        
+        # Creat output parser
+        parser = PydanticOutputParser(pydantic_object=SearchFilters)
+
+        # Create prompt
+        prompt = PromptTemplate(
+            template="""Extract search filters from the following LEGO set query. \n
+            Query: {query} {format_instructions} \n
+            Only extract filters that are explicitly mentioned in the query. \n""",
+            input_variables=["query"],
+            partial_variables={"format_instructions": parser.get_format_instructions()}
+        )
+
+        # Create chain
+        chain = LLMChain(llm=self.llm, prompt=prompt)
+        
+        try:
+            # Run extraction
+            output = chain.run(query=query)
+            filters = parser.parse(output)
+            return filters.dict(exclude_none=True)
+        except Exception as e:
+            logger.error(f"LLM filter extraction failed: {e}")
+            return self._extract_filters_regex(query)
+            
+    def _extract_filters_regex(self, query: str) -> Dict[str, Any]:
+        """
+        Extract search filters using regex patterns.
+
+        :param query: Natural language query string
+        :return: SearchFilters object with extracted filters
+        """
+        import re
+        filters = {}
+        piece_patterns = [
+            r'(\d+)\s*(?:to|-)\s*(\d+)\s*pieces?',
+            r'(?:under|less than|<)\s*(\d+)\s*pieces?',
+            r'(?:over|more than|>)\s*(\d+)\s*pieces?',
+            r'(\d+)\s*pieces?'
+        ]
+
+        for pattern in piece_patterns:
+            match = re.search(pattern, query.lower())
+            if match:
+                if len(match.groups()) == 2:
+                    filters['min_pieces'] = int(match.group(1))
+                    filters['max_pieces'] = int(match.group(2))
+                elif 'under' in pattern or 'less' in pattern:
+                    filters['max_pieces'] = int(match.group(1))
+                elif 'over' in pattern or 'more' in pattern:
+                    filters['min_pieces'] = int(match.group(1))
+                else:
+                    # Assume approximate range
+                    pieces = int(match.group(1))
+                    filters['min_pieces'] = int(pieces * 0.8)
+                    filters['max_pieces'] = int(pieces * 1.2)
+                break
+        
+        # Extract age
+        age_match = re.search(r'(\d+)[\s-]*(?:year|yr)[\s-]*old', query.lower())
+        if age_match:
+            age = int(age_match.group(1))
+            filters['min_age'] = max(age - 2, 4)
+            filters['max_age'] = age + 2
+        
+        # Extract themes
+        known_themes = ['star wars', 'city', 'technic', 'creator', 'friends', 'ninjago', 
+                       'architecture', 'ideas', 'disney', 'harry potter', 'minecraft']
+        
+        found_themes = []
+        for theme in known_themes:
+            if theme in query.lower():
+                found_themes.append(theme.title())
+        
+        if found_themes:
+            filters['themes'] = found_themes
+        
+        # Extract complexity
+        if any(word in query.lower() for word in ['simple', 'easy', 'beginner']):
+            filters['complexity'] = 'simple'
+        elif any(word in query.lower() for word in ['complex', 'challenging', 'advanced', 'expert']):
+            filters['complexity'] = 'complex'
+        elif any(word in query.lower() for word in ['moderate', 'intermediate']):
+            filters['complexity'] = 'moderate'
+        
+        # Extract budget
+        budget_match = re.search(r'\$(\d+)(?:\s*(?:to|-)\s*\$?(\d+))?', query)
+        if budget_match:
+            if budget_match.group(2):
+                filters['budget_min'] = float(budget_match.group(1))
+                filters['budget_max'] = float(budget_match.group(2))
+            else:
+                # Single price mentioned, create range
+                price = float(budget_match.group(1))
+                filters['budget_min'] = price * 0.7
+                filters['budget_max'] = price * 1.3
+        
+        return filters
+        
+    def _extract_entities_llm(self, query: str) -> Dict[str, Any]:
+        """Extract entities using LLM"""
+        if not self.llm:
+            return self._extract_entities_regex(query)
+        
+        # Would implement LLM-based entity extraction
+        # For now, falling back to regex
+        return self._extract_entities_regex(query)
+    
+    def _extract_entities_regex(self, query: str) -> Dict[str, Any]:
+        """Extract named entities using patterns"""
+        import re
+        entities = {}
+        
+        # Extract recipient info
+        recipient_match = re.search(r'for (?:my |a )?(\w+)', query.lower())
+        if recipient_match:
+            entities['recipient'] = recipient_match.group(1)
+        
+        # Extract occasion
+        occasions = ['birthday', 'christmas', 'holiday', 'anniversary']
+        for occasion in occasions:
+            if occasion in query.lower():
+                entities['occasion'] = occasion
+                break
+        
+        # Extract building preferences
+        if 'detail' in query.lower():
+            entities['preference'] = 'detailed'
+        elif 'quick' in query.lower() or 'fast' in query.lower():
+            entities['preference'] = 'quick_build'
+        
+        return entities
+    
+    def _create_semantic_query(self, og_query: str, filters: Dict, entities: Dict) -> str:
+        """
+        Create a semantic query for embedding search based on original query, filters, and entities.
+
+        :param og_query: Original natural language query
+        :param filters: Extracted search filters
+        :param entities: Extracted named entities
+        :return: Semantic query string
+        """
+        query_parts = [og_query]
+        
+        # Add filter context
+        if filters.get('themes'):
+            query_parts.append(f"from {', '.join(filters['themes'])} themes")
+        
+        if filters.get('complexity'):
+            query_parts.append(f"{filters['complexity']} complexity building experience")
+        
+        if entities.get('recipient'):
+            query_parts.append(f"suitable for {entities['recipient']}")
+        
+        return " ".join(query_parts)
+    
+    def semantic_search(self, query: str, top_k: int = 10, filters: Optional[Dict] = None) -> List[Dict]:
+        """
+        Perform semantic search for LEGO sets
+        :param query: Natural language query string
+        :param top_k: Number of top results to return
+        :param filters: Optional search filters to apply
+        :return: List of dictionaries with search results
+        """
+        if not self.vectorstore:
+            self.prep_vectorDB()
+
+        # Process the NL query
+        nl_result = self.process_nl_query(query, None)
+
+        # Use the semantic query for search
+        results = self.retriever.get_relevant_documents(nl_result.semantic_query)
+
+        # Apply filters if provided
+        filtered_results = self._apply_filters(results, nl_result.filters)
+
+    def _apply_filters(self, results: List[Document], filters: Dict) -> List[Document]:
+        """
+        Apply extracted filters to search results
+        :param results: List of Document objects from the vector store
+        :param filters: Dictionary of search filters
+        :return: Filtered list of Document objects
+        """
+        filtered = []
+        
+        for doc in results:
+            # Check piece count
+            if filters.get('min_pieces') and doc.metadata['num_parts'] < filters['min_pieces']:
+                continue
+            if filters.get('max_pieces') and doc.metadata['num_parts'] > filters['max_pieces']:
+                continue
+            
+            # Check theme
+            if filters.get('themes'):
+                theme_match = any(theme.lower() in doc.metadata['theme'].lower() 
+                                for theme in filters['themes'])
+                if not theme_match:
+                    continue
+            
+            # Check complexity
+            if filters.get('complexity') and doc.metadata.get('complexity') != filters['complexity']:
+                continue
+            
+            # Check year (approximate age)
+            if filters.get('min_age'):
+                # Newer sets for younger builders
+                if doc.metadata['year'] < 2010:
+                    continue
+            
+            filtered.append(doc)
+        
+        return filtered
+    
+    def create_recommendation_prompts(self):
+        """
+        Create prompt templates for different recommendation scenarios.
+        """
+        self.prompts = {
+            'gift_recommendation': PromptTemplate(
+                template=(
+                    "You are a LEGO expert helping someone find the perfect gift.\n\n"
+                    "User query: {query}\n"
+                    "Recipient: {recipient}\n"
+                    "Occasion: {occasion}\n"
+                    "Budget: ${budget_min} - ${budget_max}\n\n"
+                    "Available sets:\n"
+                    "{available_sets}\n\n"
+                    "Recommend the top 3 sets and explain why each would make a great gift."
+                ),
+                input_variables=[
+                    "query", "recipient", "occasion", "budget_min", "budget_max", "available_sets"
+                ]
+            ),
+            'collection_advice': PromptTemplate(
+                template=(
+                    "You are a LEGO collecting expert providing investment advice.\n\n"
+                    "User query: {query}\sn"
+                    "Current collection themes: {current_themes}\n"
+                    "Collection size: {collection_size} sets\n\n"
+                    "Available sets:\n"
+                    "{available_sets}\n\n"
+                    "Provide advice on which sets would best complement their collection and why."
+                ),
+                input_variables=[
+                    "query", "current_themes", "collection_size", "available_sets"
+                ]
+            ),
+            'building_challenge': PromptTemplate(
+                template=(
+                    "You are helping a LEGO enthusiast find their next building challenge.\n\n"
+                    "User query: {query}\n"
+                    "Previous builds: {previous_builds}\n"
+                    "Skill level: {skill_level}\n\n"
+                    "Available sets:\n"
+                    "{available_sets}\n\n"
+                    "Recommend sets that will provide an appropriate challenge and explain the building experience."
+                ),
+                input_variables=[
+                    "query", "previous_builds", "skill_level", "available_sets"
+                ]
+            )
+        }
+
+    def save_embeddings(self, path: str):
+        """Save vector store to disk"""
+        if isinstance(self.vectorstore, FAISS):
+            self.vectorstore.save_local(path)
+        elif isinstance(self.vectorstore, Chroma):
+            # Chroma persists automatically
+            pass
+    
+    def load_embeddings(self, path: str):
+        """Load vector store from disk"""
+        if os.path.exists(path):
+            self.vectorstore = FAISS.load_local(path, self.embeddings)
+            self.retriever = self.vectorstore.as_retriever(
+                search_type="similarity",
+                search_kwargs={"k": 20}
+            )
