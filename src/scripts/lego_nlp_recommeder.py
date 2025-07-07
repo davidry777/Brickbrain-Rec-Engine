@@ -272,7 +272,7 @@ class NLPRecommender:
             filters = self._extract_filters_regex(query)
             entities = self._extract_entities_regex(query)
 
-        # TODO: Create semantic query for embediing search
+        # Create semantic query for embediing search
         semantic_query = self._create_semantic_query(query, filters, entities)
 
         # Calculate dynamic confidence

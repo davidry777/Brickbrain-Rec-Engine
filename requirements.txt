@@ -1,22 +1,22 @@
 # Core Web Framework
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
+fastapi==0.116.0
+uvicorn[standard]==0.35.0
 
 # Database
-sqlalchemy==2.0.23
-psycopg2-binary==2.9.9
-alembic==1.13.1
+sqlalchemy==2.0.41
+psycopg2-binary==2.9.10
+alembic==1.16.2
 
-# LangChain Stack - Fixed versions for compatibility
-langsmith>=0.1.0,<0.2.0  # Using a version compatible with langchain-core
-langchain-core>=0.1.0   # Install core first
-langchain>=0.1.4        # Then main package
-langchain-openai==0.0.5
-langchain-community>=0.0.14
-langgraph==0.0.26
+# LangChain Stack - Updated to v0.3.x (Breaking changes - see migration guide)
+langsmith>=0.4.0,<0.5.0  # Updated for compatibility with new LangChain
+langchain-core>=0.3.0   # Major version update
+langchain>=0.3.26        # Major version update
+langchain-openai==0.3.27
+langchain-community>=0.3.27
+langgraph==0.5.1
 
-# LLM Providers - Free Options
-transformers>=4.38.0  # Updated version for compatibility
+# LLM Providers - Updated versions
+transformers>=4.53.1  # Latest version
 torch>=2.0.0
 
 # Hugging Face Integration
@@ -29,49 +29,49 @@ accelerate>=0.25.0  # For faster model loading/inference
 # optimum==1.16.1      # For model optimization
 
 # Vector Stores and Embeddings
-chromadb==0.4.22
-sentence-transformers==2.6.0  # Updated to newer version
-tiktoken==0.5.2
+chromadb==1.0.15  # Major version update - check for breaking changes
+sentence-transformers==5.0.0  # Major version update - check for breaking changes
+tiktoken==0.9.0
 
 # Data Processing
 pandas>=2.1.0
-numpy>=1.25.0
+numpy>=1.26.4  # Stay on 1.x for compatibility - NumPy 2.x may have breaking changes
 scikit-learn>=1.3.0
 
 # Web Scraping (for LEGO data collection)
 requests>=2.31.0
-beautifulsoup4==4.12.2
-scrapy==2.11.0
+beautifulsoup4==4.13.4
+scrapy==2.13.3
 
 # Data Validation
-pydantic==2.5.2
-pydantic-settings==2.1.0
+pydantic==2.11.7
+pydantic-settings==2.10.1
 
 # Authentication & Security
 passlib[bcrypt]==1.7.4
-python-jose[cryptography]==3.3.0
-python-multipart==0.0.6
+python-jose[cryptography]==3.5.0
+python-multipart==0.0.20
 
 # Environment Management
-python-dotenv==1.0.0
+python-dotenv==1.1.1
 
 # Logging and Monitoring
-loguru==0.7.2
+loguru==0.7.3
 
 # Testing
 pytest>=7.4.0
-pytest-asyncio==0.21.1
-httpx==0.25.2
+pytest-asyncio==1.0.0
+httpx==0.28.1
 
 # Development Tools
-black==23.12.1
-flake8==6.1.0
-isort==5.13.2
-pre-commit==3.6.0
+black==25.1.0
+flake8==7.3.0
+isort==6.0.1
+pre-commit==4.2.0
 
 # Documentation
-mkdocs==1.5.3
-mkdocs-material==9.4.8
+mkdocs==1.6.1
+mkdocs-material==9.6.15
 
 # Jupyter (for data exploration)
 jupyter>=1.0.0
@@ -80,18 +80,18 @@ ipykernel>=6.0.0
 # Data Visualization (optional, for development/analysis)
 matplotlib>=3.8.0
 seaborn>=0.13.0
-plotly==5.17.0
+plotly==6.2.0
 
 # File Processing
-openpyxl==3.1.2
+openpyxl==3.1.5
 PyYAML>=6.0.0
 
 # Rate Limiting (for API)
 slowapi==0.1.9
 
 # Background Tasks
-celery==5.3.4
-redis==5.0.1
+celery==5.5.3
+redis==6.2.0
 
 # Production WSGI Server (alternative to uvicorn)
-gunicorn==21.2.0
+gunicorn==23.0.0
