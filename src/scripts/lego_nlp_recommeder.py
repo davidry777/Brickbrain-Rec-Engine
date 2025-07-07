@@ -13,7 +13,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import Chroma, FAISS
 from langchain.schema import Document
 from langchain.chains.llm import LLMChain
-from langchain.chains.retrieval_qa.base import RetrievalQA
+
 from langchain_openai.chat_models.base import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.callbacks import get_openai_callback
@@ -201,6 +201,58 @@ class NLPRecommender:
         else:
             return 'moderate'
         
+    def _calculate_confidence(self, query: str, intent: str, filters: Dict[str, Any], entities: Dict[str, Any]) -> float:
+        """
+        Calculate confidence score based on query processing results.
+        
+        :param query: Original natural language query
+        :param intent: Detected intent
+        :param filters: Extracted filters
+        :param entities: Extracted entities
+        :return: Confidence score between 0.0 and 1.0
+        """
+        confidence_factors = []
+        
+        # Intent confidence (0.2 - 0.4)
+        intent_keywords = self.intents.get(intent, [])
+        intent_matches = sum(1 for keyword in intent_keywords if keyword in query.lower())
+        if intent_matches > 0:
+            intent_confidence = min(0.4, 0.2 + (intent_matches * 0.1))
+        else:
+            intent_confidence = 0.2  # Default intent fallback
+        confidence_factors.append(intent_confidence)
+        
+        # Filter extraction confidence (0.0 - 0.3)
+        filter_confidence = 0.0
+        if filters:
+            # Award points for different types of filters
+            filter_types = len(filters)
+            specific_filters = ['themes', 'min_pieces', 'max_pieces', 'complexity']
+            specific_matches = sum(1 for f in specific_filters if f in filters)
+            filter_confidence = min(0.3, (filter_types * 0.05) + (specific_matches * 0.08))
+        confidence_factors.append(filter_confidence)
+        
+        # Entity extraction confidence (0.0 - 0.2)
+        entity_confidence = 0.0
+        if entities:
+            entity_types = len(entities)
+            entity_confidence = min(0.2, entity_types * 0.07)
+        confidence_factors.append(entity_confidence)
+        
+        # Query clarity confidence (0.0 - 0.1)
+        query_words = len(query.split())
+        if query_words >= 3:  # Reasonable query length
+            clarity_confidence = min(0.1, 0.05 + (min(query_words, 10) * 0.005))
+        else:
+            clarity_confidence = 0.02  # Very short queries are less clear
+        confidence_factors.append(clarity_confidence)
+        
+        # Calculate total confidence
+        total_confidence = sum(confidence_factors)
+        
+        # Ensure confidence is within bounds
+        return max(0.1, min(1.0, total_confidence))
+
     def process_nl_query(self, query: str, user_context: Optional[Dict]) -> NLQueryResult:
         """
         Process a natural language query to extract intent, filters, and semantic query.
@@ -212,7 +264,7 @@ class NLPRecommender:
         # Detect Intent
         intent = self._detect_intent(query)
 
-        # TODO Extract filters and entities
+        # Extract filters and entities
         if self.llm:
             filters = self._extract_filters_llm(query)
             entities = self._extract_entities_llm(query)
@@ -223,10 +275,13 @@ class NLPRecommender:
         # TODO: Create semantic query for embediing search
         semantic_query = self._create_semantic_query(query, filters, entities)
 
+        # Calculate dynamic confidence
+        confidence = self._calculate_confidence(query, intent, filters, entities)
+
         return NLQueryResult(
             intent=intent,
             filters=filters,
-            confidence=0.85,
+            confidence=confidence,
             extracted_entities=entities,
             semantic_query=semantic_query
         )
@@ -256,6 +311,7 @@ class NLPRecommender:
             return self._extract_filters_regex(query)
         
         # Creat output parser
+        # Create output parser
         parser = PydanticOutputParser(pydantic_object=SearchFilters)
 
         # Create prompt
@@ -278,6 +334,12 @@ class NLPRecommender:
         except Exception as e:
             logger.error(f"LLM filter extraction failed: {e}")
             return self._extract_filters_regex(query)
+        
+    def _load_available_themes(self) -> List[str]:
+        """Load all available themes from database"""
+        query = "SELECT DISTINCT LOWER(name) as theme_name FROM themes WHERE name IS NOT NULL"
+        df = pd.read_sql_query(query, self.dbconn)
+        return df['theme_name'].tolist()
             
     def _extract_filters_regex(self, query: str) -> Dict[str, Any]:
         """
@@ -320,8 +382,7 @@ class NLPRecommender:
             filters['max_age'] = age + 2
         
         # Extract themes
-        known_themes = ['star wars', 'city', 'technic', 'creator', 'friends', 'ninjago', 
-                       'architecture', 'ideas', 'disney', 'harry potter', 'minecraft']
+        known_themes = self._load_available_themes()
         
         found_themes = []
         for theme in known_themes:
@@ -411,24 +472,38 @@ class NLPRecommender:
         return " ".join(query_parts)
     
     def semantic_search(self, query: str, top_k: int = 10, filters: Optional[Dict] = None) -> List[Dict]:
-        """
-        Perform semantic search for LEGO sets
-        :param query: Natural language query string
-        :param top_k: Number of top results to return
-        :param filters: Optional search filters to apply
-        :return: List of dictionaries with search results
-        """
-        if not self.vectorstore:
-            self.prep_vectorDB()
+         """
+         Perform semantic search for LEGO sets
+         :param query: Natural language query string
+         :param top_k: Number of top results to return
+         :param filters: Optional search filters to apply
+         :return: List of dictionaries with search results
+         """
+         if not self.vectorstore:
+             self.prep_vectorDB()
 
-        # Process the NL query
-        nl_result = self.process_nl_query(query, None)
+         # Process the NL query
+         nl_result = self.process_nl_query(query, None)
 
-        # Use the semantic query for search
-        results = self.retriever.get_relevant_documents(nl_result.semantic_query)
+         # Use the semantic query for search
+         results = self.retriever.get_relevant_documents(nl_result.semantic_query)
 
-        # Apply filters if provided
-        filtered_results = self._apply_filters(results, nl_result.filters)
+         # Apply filters if provided
+         filtered_results = self._apply_filters(results, nl_result.filters)
+         
+         # Convert documents to result format
+         search_results = []
+         for doc in filtered_results[:top_k]:
+             search_results.append({
+                 'set_num': doc.metadata['set_num'],
+                 'name': doc.metadata['name'],
+                 'year': doc.metadata['year'],
+                 'num_parts': doc.metadata['num_parts'],
+                 'theme': doc.metadata['theme'],
+                 'score': doc.metadata.get('score', 0.0)
+             })
+         
+         return search_results
 
     def _apply_filters(self, results: List[Document], filters: Dict) -> List[Document]:
         """
@@ -489,7 +564,7 @@ class NLPRecommender:
             ),
             'collection_advice': PromptTemplate(
                 template=(
-                    "You are a LEGO collecting expert providing investment advice.\n\n"
+                    "User query: {query}\n"
                     "User query: {query}\sn"
                     "Current collection themes: {current_themes}\n"
                     "Collection size: {collection_size} sets\n\n"
@@ -527,8 +602,15 @@ class NLPRecommender:
     
     def load_embeddings(self, path: str):
         """Load vector store from disk"""
-        if os.path.exists(path):
+        if self.openai_flag:
+            self.vectorstore = Chroma(
+                persist_directory=path,
+                embedding_function=self.embeddings
+            )
+        elif os.path.exists(path):
             self.vectorstore = FAISS.load_local(path, self.embeddings)
+        
+        if self.vectorstore:
             self.retriever = self.vectorstore.as_retriever(
                 search_type="similarity",
                 search_kwargs={"k": 20}
