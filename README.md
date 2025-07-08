@@ -35,33 +35,42 @@ data/
 
 ## 🚀 Quick Start
 
-### 1. Start the Complete System
+### Method 1: Complete Setup and Start (Recommended)
 ```bash
-# Start PostgreSQL and Application containers
-docker-compose up -d
+# One command to set up everything and start the system
+./setup_and_start.sh
 
-# This automatically:
-# - Starts PostgreSQL database
-# - Creates conda environment with all dependencies
-# - Starts the FastAPI server on http://localhost:8000
+# This script:
+# - Resets and sets up the database
+# - Starts PostgreSQL and FastAPI containers
+# - Sets up conda environment with all dependencies
+# - Installs natural language processing features
+# - Loads LEGO data (if available)
+# - Starts the API server on http://localhost:8000
 ```
 
-### 2. Load LEGO Data (25K+ sets)
+### Method 2: Manual Setup (Step by Step)
 ```bash
-# Reset database and load all LEGO data
+# 1. Start containers
+docker-compose up -d
+
+# 2. Load LEGO data
 ./reset_db.sh
+
+# 3. Set up natural language features (optional)
+./setup_nl_features.sh
 ```
 
 ### 3. Test the System
 ```bash
-# Run all tests inside the container
-docker exec brickbrain-app bash /app/run_tests.sh
+# Run all tests (basic)
+./run_all_tests.sh
 
-# Run with performance and examples
-docker exec brickbrain-app bash /app/run_tests.sh --all
+# Run all tests including optional ones
+./run_all_tests.sh --all
 
-# Or run specific tests inside container
-docker exec brickbrain-app conda run -n brickbrain-rec python /app/tests/integration/production_test_simple.py
+# Run specific test categories
+./run_all_tests.sh --integration --performance --nl-advanced
 ```
 
 ### 4. Try the Demo
@@ -79,6 +88,8 @@ docker exec brickbrain-app conda run -n brickbrain-rec python /app/examples/exam
 
 ### Core Recommendations
 - `POST /recommendations` - Get personalized recommendations
+- `POST /search/natural` - **NEW**: Natural language search ("star wars sets for kids")
+- `POST /nlp/understand` - **NEW**: Query understanding and intent detection
 - `GET /health` - System health check
 - `GET /metrics` - Performance analytics
 
@@ -98,17 +109,31 @@ docker exec brickbrain-app conda run -n brickbrain-rec python /app/examples/exam
 
 ## 🧪 Testing
 
-The system includes comprehensive test coverage with Docker integration:
+The system includes comprehensive test coverage with streamlined execution:
 
 ```bash
-# Run all tests in the container
-docker exec brickbrain-app bash /app/run_tests.sh
+# Basic testing (unit tests, API health, core NL features)
+./run_all_tests.sh
 
-# Run specific test categories
-docker exec brickbrain-app bash /app/run_tests.sh --performance  # Include load testing
-docker exec brickbrain-app bash /app/run_tests.sh --all          # Everything including examples
+# Comprehensive testing (includes all optional tests)
+./run_all_tests.sh --all
 
-# Individual test suites (run inside container)
+# Specific test categories
+./run_all_tests.sh --integration    # End-to-end workflows
+./run_all_tests.sh --performance    # Load and speed testing
+./run_all_tests.sh --nl-advanced    # Advanced NL features
+./run_all_tests.sh --examples       # Example scripts
+
+# Combined categories
+./run_all_tests.sh --integration --performance
+```
+
+### Test Categories
+- **Unit Tests**: Database connectivity, recommendation algorithms
+- **Integration Tests**: End-to-end API workflows, NL processing
+- **Performance Tests**: Load testing, response time validation
+- **API Tests**: Endpoint availability, error handling
+- **Natural Language Tests**: Query understanding, semantic search
 docker exec brickbrain-app conda run -n brickbrain-rec python /app/tests/unit/test_database.py
 docker exec brickbrain-app conda run -n brickbrain-rec python /app/tests/unit/test_recommendations.py
 docker exec brickbrain-app conda run -n brickbrain-rec python /app/tests/integration/final_validation.py
@@ -370,3 +395,71 @@ docker stats
 # Monitor API performance
 docker exec brickbrain-app conda run -n brickbrain-rec python /app/tests/performance/production_scalability_test.py
 ```
+
+## 🛠️ Streamlined Scripts
+
+The project includes two main scripts for easy setup and testing:
+
+### 1. `setup_and_start.sh` - Complete System Setup
+**One-command setup and startup:**
+```bash
+./setup_and_start.sh
+```
+
+**What it does:**
+- ✅ Resets and sets up the PostgreSQL database
+- ✅ Creates required directories and environment files
+- ✅ Starts Docker containers (database and application)
+- ✅ Sets up conda environment with all dependencies
+- ✅ Installs natural language processing packages
+- ✅ Downloads NLTK and spaCy models
+- ✅ Loads LEGO data (if available)
+- ✅ Initializes vector database for semantic search
+- ✅ Starts FastAPI server on http://localhost:8000
+- ✅ Runs basic functionality tests
+
+**Perfect for:**
+- First-time setup
+- Fresh development environment
+- Resetting after major changes
+- Demonstration or deployment
+
+### 2. `run_all_tests.sh` - Comprehensive Testing
+**Flexible test execution:**
+```bash
+# Basic tests (always run)
+./run_all_tests.sh
+
+# All tests including optional ones
+./run_all_tests.sh --all
+
+# Specific categories
+./run_all_tests.sh --integration --performance --nl-advanced --examples
+```
+
+**Test Categories:**
+- **Core Tests** (always run): Unit tests, API health, basic NL features
+- **Integration Tests** (`--integration`): End-to-end workflows
+- **Performance Tests** (`--performance`): Load and scalability testing
+- **Advanced NL Tests** (`--nl-advanced`): Comprehensive natural language validation
+- **Example Scripts** (`--examples`): Usage demonstrations
+
+**Perfect for:**
+- Development testing
+- CI/CD pipelines
+- Quality assurance
+- Performance validation
+
+### Script Benefits
+- **🚀 Fast Setup**: One command gets everything running
+- **🧪 Comprehensive Testing**: All test types with flexible options
+- **📊 Clear Output**: Color-coded status and detailed summaries
+- **🔧 Error Handling**: Graceful failure handling and troubleshooting tips
+- **📈 Progress Tracking**: Real-time status updates during setup
+- **⚡ Optimized**: Efficient dependency installation and caching
+
+### Legacy Scripts (Still Available)
+- `reset_db.sh`: Database-only reset
+- `setup_nl_features.sh`: NL features only setup
+- `run_tests.sh`: Original test runner
+- `start_api.sh`: API server only startup

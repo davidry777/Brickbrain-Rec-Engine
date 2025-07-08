@@ -24,6 +24,9 @@ services:
     volumes:
       - .:/app
       - conda_envs:/opt/conda/envs
+      # Add volumes for NL features
+      - model_cache:/app/.cache
+      - embeddings_data:/app/embeddings
     ports:
       - "8000:8000"
     depends_on:
@@ -35,11 +38,26 @@ services:
       - DB_USER=brickbrain
       - DB_PASSWORD=brickbrain_password
       - DB_PORT=5432
+      # Add NL environment variables
+      - TRANSFORMERS_CACHE=/app/.cache/huggingface
+      - SENTENCE_TRANSFORMERS_HOME=/app/.cache/sentence-transformers
+      - LANGCHAIN_CACHE_DIR=/app/.cache/langchain
+      - TOKENIZERS_PARALLELISM=false
     command: |
       bash -c "
         if ! conda env list | grep -q brickbrain-rec; then
+          echo 'Creating conda environment...'
           conda env create -f environment.yml -n brickbrain-rec
         fi &&
+        echo 'Installing additional NL dependencies...' &&
+        conda run -n brickbrain-rec pip install --quiet \
+          langchain==0.1.16 \
+          langchain-community==0.0.34 \
+          sentence-transformers==2.6.1 \
+          faiss-cpu==1.8.0 \
+          chromadb==0.4.24 \
+          nltk==3.8.1 &&
+        echo 'Starting API with NL features...' &&
         conda run -n brickbrain-rec python src/scripts/recommendation_api.py
       "
     restart: unless-stopped
@@ -49,7 +67,16 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+    # Add resource limits for NL operations
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
 
 volumes:
   postgres_data:
   conda_envs:
+  model_cache:
+  embeddings_data:

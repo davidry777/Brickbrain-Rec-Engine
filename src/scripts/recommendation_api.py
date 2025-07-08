@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
 
         # Initialize NLP recommender
         logger.info("Initializing natural language processor...")
-        nl_recommender = NLPRecommender(conn, use_openai=False)
+        nl_recommender = NLPRecommender(conn, openai_flag=False)
 
         # Load or create embeddings
         embeddings_path = "./embeddings/faiss_index"

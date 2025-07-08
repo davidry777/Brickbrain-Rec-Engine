@@ -1,0 +1,40 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+type: command
+
+display_name: lego_embeddings_processing
+experiment_name: lego_recommendation_engine
+
+code: ../src/scripts
+command: >-
+  python cloud_vector_processor.py 
+  --input ${{inputs.input_data}}/lego_sets_for_cloud.json
+  --output ${{outputs.embeddings_output}}
+  --model ${{inputs.model_name}}
+  --batch-size ${{inputs.batch_size}}
+
+inputs:
+  input_data:
+    type: uri_folder
+    path: azureml://datastores/workspaceblobstore/paths/lego-data/
+  model_name: 
+    type: string
+    default: sentence-transformers/all-MiniLM-L6-v2
+  batch_size:
+    type: integer
+    default: 512
+
+outputs:
+  embeddings_output:
+    type: uri_folder
+    path: azureml://datastores/workspaceblobstore/paths/lego-embeddings-output/
+
+environment: azureml:pytorch-1.12-gpu@latest
+
+compute: azureml:gpu-cluster
+
+resources:
+  instance_count: 1
+  instance_type: Standard_NC6s_v3
+
+settings:
+  max_run_duration: PT1H

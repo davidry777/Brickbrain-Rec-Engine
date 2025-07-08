@@ -155,6 +155,504 @@ def test_search_functionality():
         print(f"❌ Search test failed: {e}")
         return False
 
+def test_natural_language_recommendations():
+    """Test natural language recommendation functionality"""
+    nl_test_cases = [
+        {
+            "name": "Simple Theme Search",
+            "payload": {
+                "query": "star wars sets with lots of pieces",
+                "top_k": 3,
+                "include_explanation": True
+            },
+            "expected_themes": ["star wars"],
+            "expected_min_results": 1
+        },
+        {
+            "name": "Gift Recommendation",
+            "payload": {
+                "query": "birthday gift for my 10 year old nephew",
+                "top_k": 5,
+                "include_explanation": True
+            },
+            "expected_intent": "gift_recommendation",
+            "expected_min_results": 1
+        },
+        {
+            "name": "Complex Search with Filters",
+            "payload": {
+                "query": "detailed technic sets between 1000 and 2000 pieces for adults",
+                "top_k": 5,
+                "include_explanation": True
+            },
+            "expected_themes": ["technic"],
+            "expected_min_results": 1
+        },
+        {
+            "name": "Similar Set Request",
+            "payload": {
+                "query": "sets similar to the millennium falcon",
+                "top_k": 3,
+                "include_explanation": True
+            },
+            "expected_intent": "recommend_similar",
+            "expected_min_results": 1
+        },
+        {
+            "name": "Budget-Constrained Search",
+            "payload": {
+                "query": "lego sets under $50 for beginners",
+                "top_k": 5,
+                "include_explanation": True
+            },
+            "expected_filters": {"budget_max": 50},
+            "expected_min_results": 1
+        }
+    ]
+    
+    all_passed = True
+    print("Testing Natural Language Search...")
+    
+    for test in nl_test_cases:
+        try:
+            response = requests.post(
+                "http://localhost:8000/search/natural",
+                json=test["payload"],
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                nl_result = response.json()
+                
+                # Check basic response structure
+                if "results" not in nl_result:
+                    print(f"❌ {test['name']}: Missing 'results' in response")
+                    all_passed = False
+                    continue
+                
+                results = nl_result["results"]
+                
+                # Check minimum results
+                if len(results) >= test["expected_min_results"]:
+                    print(f"✅ {test['name']}: {len(results)} results returned")
+                else:
+                    print(f"❌ {test['name']}: Only {len(results)} results (expected >= {test['expected_min_results']})")
+                    all_passed = False
+                    continue
+                
+                # Check intent detection if specified
+                if "expected_intent" in test:
+                    detected_intent = nl_result.get("intent", "").lower()
+                    expected_intent = test["expected_intent"].lower()
+                    if expected_intent in detected_intent or detected_intent in expected_intent:
+                        print(f"   ✅ Intent correctly detected: {detected_intent}")
+                    else:
+                        print(f"   ⚠️ Intent mismatch: expected {expected_intent}, got {detected_intent}")
+                
+                # Check theme extraction if specified
+                if "expected_themes" in test:
+                    extracted_filters = nl_result.get("extracted_filters", {})
+                    themes = extracted_filters.get("themes", [])
+                    theme_found = any(
+                        expected_theme.lower() in str(themes).lower()
+                        for expected_theme in test["expected_themes"]
+                    )
+                    if theme_found:
+                        print(f"   ✅ Theme correctly extracted: {themes}")
+                    else:
+                        print(f"   ⚠️ Theme extraction: expected {test['expected_themes']}, got {themes}")
+                
+                # Check filters if specified
+                if "expected_filters" in test:
+                    extracted_filters = nl_result.get("extracted_filters", {})
+                    for filter_key, expected_value in test["expected_filters"].items():
+                        if filter_key in extracted_filters:
+                            print(f"   ✅ Filter extracted: {filter_key} = {extracted_filters[filter_key]}")
+                        else:
+                            print(f"   ⚠️ Filter missing: {filter_key}")
+                
+                # Check if explanation is provided when requested
+                if test["payload"].get("include_explanation"):
+                    if "explanation" in nl_result and nl_result["explanation"]:
+                        print(f"   ✅ Explanation provided")
+                    else:
+                        print(f"   ⚠️ Explanation missing or empty")
+                
+            else:
+                print(f"❌ {test['name']}: HTTP {response.status_code}")
+                if response.status_code == 500:
+                    print(f"   Error: {response.text}")
+                all_passed = False
+        except Exception as e:
+            print(f"❌ {test['name']}: {e}")
+            all_passed = False
+    
+    return all_passed
+
+def test_semantic_similarity():
+    """Test semantic similarity search"""
+    try:
+        # Test semantic similarity endpoint
+        similarity_payload = {
+            "set_num": "75192-1",  # Millennium Falcon
+            "description": "large detailed spaceship",
+            "top_k": 3
+        }
+        
+        response = requests.post(
+            "http://localhost:8000/sets/similar/semantic",
+            json=similarity_payload,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            results = response.json()
+            if len(results) >= 1:
+                print(f"✅ Semantic similarity: Found {len(results)} similar sets")
+                # Check if results have required fields
+                for result in results[:2]:  # Check first 2 results
+                    required_fields = ['set_num', 'name', 'relevance_score']
+                    if all(field in result for field in required_fields):
+                        print(f"   ✅ Result structure valid: {result['name']} (score: {result['relevance_score']:.2f})")
+                    else:
+                        print(f"   ⚠️ Result missing required fields: {result}")
+                return True
+            else:
+                print(f"❌ Semantic similarity: No results returned")
+                return False
+        else:
+            print(f"❌ Semantic similarity: HTTP {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ Semantic similarity test failed: {e}")
+        return False
+
+def test_query_understanding():
+    """Test query understanding capabilities"""
+    try:
+        test_query = "I want a complex Star Wars set with over 1000 pieces for display"
+        
+        response = requests.post(
+            "http://localhost:8000/nlp/understand",
+            json=test_query,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            understanding = response.json()
+            
+            # Check if response has expected structure
+            expected_fields = ['intent', 'filters', 'confidence', 'entities']
+            missing_fields = [field for field in expected_fields if field not in understanding]
+            
+            if not missing_fields:
+                print("✅ Query understanding: All fields present")
+                print(f"   Intent: {understanding.get('intent', 'unknown')}")
+                print(f"   Confidence: {understanding.get('confidence', 0):.2%}")
+                print(f"   Filters: {len(understanding.get('filters', {}))}")
+                print(f"   Entities: {len(understanding.get('entities', {}))}")
+                return True
+            else:
+                print(f"❌ Query understanding: Missing fields: {missing_fields}")
+                return False
+        else:
+            print(f"❌ Query understanding: HTTP {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ Query understanding test failed: {e}")
+        return False
+
+def test_conversational_recommendations():
+    """Test conversational recommendation capabilities"""
+    try:
+        conversation_payload = {
+            "query": "I'm looking for a gift for my nephew",
+            "conversation_history": [
+                {"role": "user", "content": "What LEGO themes are popular?"},
+                {"role": "assistant", "content": "Star Wars, City, and Technic are very popular themes."}
+            ],
+            "user_id": None,
+            "context": {"budget": "under_100", "age": "child"}
+        }
+        
+        response = requests.post(
+            "http://localhost:8000/recommendations/conversational",
+            json=conversation_payload,
+            timeout=15
+        )
+        
+        if response.status_code == 200:
+            conv_result = response.json()
+            
+            # Check basic structure
+            if "type" in conv_result and "results" in conv_result:
+                print(f"✅ Conversational recommendations: {conv_result['type']}")
+                print(f"   Results: {len(conv_result['results'])}")
+                
+                # Check for follow-up questions
+                if "follow_up_questions" in conv_result:
+                    print(f"   Follow-up questions: {len(conv_result['follow_up_questions'])}")
+                
+                return True
+            else:
+                print(f"❌ Conversational recommendations: Invalid response structure")
+                return False
+        else:
+            print(f"❌ Conversational recommendations: HTTP {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ Conversational recommendations test failed: {e}")
+        return False
+
+def test_natural_language_recommendations():
+    """Test natural language recommendation functionality"""
+    nl_test_cases = [
+        {
+            "name": "Simple Theme Search",
+            "payload": {
+                "query": "star wars sets with lots of pieces",
+                "top_k": 3,
+                "include_explanation": True
+            },
+            "expected_themes": ["star wars"],
+            "expected_min_results": 1
+        },
+        {
+            "name": "Gift Recommendation",
+            "payload": {
+                "query": "birthday gift for my 10 year old nephew",
+                "top_k": 5,
+                "include_explanation": True
+            },
+            "expected_intent": "gift_recommendation",
+            "expected_min_results": 1
+        },
+        {
+            "name": "Complex Search with Filters",
+            "payload": {
+                "query": "detailed technic sets between 1000 and 2000 pieces for adults",
+                "top_k": 5,
+                "include_explanation": True
+            },
+            "expected_themes": ["technic"],
+            "expected_min_results": 1
+        },
+        {
+            "name": "Similar Set Request",
+            "payload": {
+                "query": "sets similar to the millennium falcon",
+                "top_k": 3,
+                "include_explanation": True
+            },
+            "expected_intent": "recommend_similar",
+            "expected_min_results": 1
+        },
+        {
+            "name": "Budget-Constrained Search",
+            "payload": {
+                "query": "lego sets under $50 for beginners",
+                "top_k": 5,
+                "include_explanation": True
+            },
+            "expected_filters": {"budget_max": 50},
+            "expected_min_results": 1
+        }
+    ]
+    
+    all_passed = True
+    print("Testing Natural Language Search...")
+    
+    for test in nl_test_cases:
+        try:
+            response = requests.post(
+                "http://localhost:8000/search/natural",
+                json=test["payload"],
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                nl_result = response.json()
+                
+                # Check basic response structure
+                if "results" not in nl_result:
+                    print(f"❌ {test['name']}: Missing 'results' in response")
+                    all_passed = False
+                    continue
+                
+                results = nl_result["results"]
+                
+                # Check minimum results
+                if len(results) >= test["expected_min_results"]:
+                    print(f"✅ {test['name']}: {len(results)} results returned")
+                else:
+                    print(f"❌ {test['name']}: Only {len(results)} results (expected >= {test['expected_min_results']})")
+                    all_passed = False
+                    continue
+                
+                # Check intent detection if specified
+                if "expected_intent" in test:
+                    detected_intent = nl_result.get("intent", "").lower()
+                    expected_intent = test["expected_intent"].lower()
+                    if expected_intent in detected_intent or detected_intent in expected_intent:
+                        print(f"   ✅ Intent correctly detected: {detected_intent}")
+                    else:
+                        print(f"   ⚠️ Intent mismatch: expected {expected_intent}, got {detected_intent}")
+                
+                # Check theme extraction if specified
+                if "expected_themes" in test:
+                    extracted_filters = nl_result.get("extracted_filters", {})
+                    themes = extracted_filters.get("themes", [])
+                    theme_found = any(
+                        expected_theme.lower() in str(themes).lower()
+                        for expected_theme in test["expected_themes"]
+                    )
+                    if theme_found:
+                        print(f"   ✅ Theme correctly extracted: {themes}")
+                    else:
+                        print(f"   ⚠️ Theme extraction: expected {test['expected_themes']}, got {themes}")
+                
+                # Check filters if specified
+                if "expected_filters" in test:
+                    extracted_filters = nl_result.get("extracted_filters", {})
+                    for filter_key, expected_value in test["expected_filters"].items():
+                        if filter_key in extracted_filters:
+                            print(f"   ✅ Filter extracted: {filter_key} = {extracted_filters[filter_key]}")
+                        else:
+                            print(f"   ⚠️ Filter missing: {filter_key}")
+                
+                # Check if explanation is provided when requested
+                if test["payload"].get("include_explanation"):
+                    if "explanation" in nl_result and nl_result["explanation"]:
+                        print(f"   ✅ Explanation provided")
+                    else:
+                        print(f"   ⚠️ Explanation missing or empty")
+                
+            else:
+                print(f"❌ {test['name']}: HTTP {response.status_code}")
+                if response.status_code == 500:
+                    print(f"   Error: {response.text}")
+                all_passed = False
+        except Exception as e:
+            print(f"❌ {test['name']}: {e}")
+            all_passed = False
+    
+    return all_passed
+
+def test_semantic_similarity():
+    """Test semantic similarity search"""
+    try:
+        # Test semantic similarity endpoint
+        similarity_payload = {
+            "set_num": "75192-1",  # Millennium Falcon
+            "description": "large detailed spaceship",
+            "top_k": 3
+        }
+        
+        response = requests.post(
+            "http://localhost:8000/sets/similar/semantic",
+            json=similarity_payload,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            results = response.json()
+            if len(results) >= 1:
+                print(f"✅ Semantic similarity: Found {len(results)} similar sets")
+                # Check if results have required fields
+                for result in results[:2]:  # Check first 2 results
+                    required_fields = ['set_num', 'name', 'relevance_score']
+                    if all(field in result for field in required_fields):
+                        print(f"   ✅ Result structure valid: {result['name']} (score: {result['relevance_score']:.2f})")
+                    else:
+                        print(f"   ⚠️ Result missing required fields: {result}")
+                return True
+            else:
+                print(f"❌ Semantic similarity: No results returned")
+                return False
+        else:
+            print(f"❌ Semantic similarity: HTTP {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ Semantic similarity test failed: {e}")
+        return False
+
+def test_query_understanding():
+    """Test query understanding capabilities"""
+    try:
+        test_query = "I want a complex Star Wars set with over 1000 pieces for display"
+        
+        response = requests.post(
+            "http://localhost:8000/nlp/understand",
+            json=test_query,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            understanding = response.json()
+            
+            # Check if response has expected structure
+            expected_fields = ['intent', 'filters', 'confidence', 'entities']
+            missing_fields = [field for field in expected_fields if field not in understanding]
+            
+            if not missing_fields:
+                print("✅ Query understanding: All fields present")
+                print(f"   Intent: {understanding.get('intent', 'unknown')}")
+                print(f"   Confidence: {understanding.get('confidence', 0):.2%}")
+                print(f"   Filters: {len(understanding.get('filters', {}))}")
+                print(f"   Entities: {len(understanding.get('entities', {}))}")
+                return True
+            else:
+                print(f"❌ Query understanding: Missing fields: {missing_fields}")
+                return False
+        else:
+            print(f"❌ Query understanding: HTTP {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ Query understanding test failed: {e}")
+        return False
+
+def test_conversational_recommendations():
+    """Test conversational recommendation capabilities"""
+    try:
+        conversation_payload = {
+            "query": "I'm looking for a gift for my nephew",
+            "conversation_history": [
+                {"role": "user", "content": "What LEGO themes are popular?"},
+                {"role": "assistant", "content": "Star Wars, City, and Technic are very popular themes."}
+            ],
+            "user_id": None,
+            "context": {"budget": "under_100", "age": "child"}
+        }
+        
+        response = requests.post(
+            "http://localhost:8000/recommendations/conversational",
+            json=conversation_payload,
+            timeout=15
+        )
+        
+        if response.status_code == 200:
+            conv_result = response.json()
+            
+            # Check basic structure
+            if "type" in conv_result and "results" in conv_result:
+                print(f"✅ Conversational recommendations: {conv_result['type']}")
+                print(f"   Results: {len(conv_result['results'])}")
+                
+                # Check for follow-up questions
+                if "follow_up_questions" in conv_result:
+                    print(f"   Follow-up questions: {len(conv_result['follow_up_questions'])}")
+                
+                return True
+            else:
+                print(f"❌ Conversational recommendations: Invalid response structure")
+                return False
+        else:
+            print(f"❌ Conversational recommendations: HTTP {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ Conversational recommendations test failed: {e}")
+        return False
+
 def main():
     print_header("FINAL PRODUCTION READINESS VALIDATION")
     print(f"🕐 Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -192,6 +690,30 @@ def main():
     test_results["Search"] = search_ok
     all_tests_passed = all_tests_passed and search_ok
     
+    # Test 5: Natural Language Recommendations
+    print_section("Natural Language Recommendations")
+    nl_ok = test_natural_language_recommendations()
+    test_results["Natural Language"] = nl_ok
+    all_tests_passed = all_tests_passed and nl_ok
+    
+    # Test 6: Semantic Similarity
+    print_section("Semantic Similarity")
+    semantic_ok = test_semantic_similarity()
+    test_results["Semantic Similarity"] = semantic_ok
+    all_tests_passed = all_tests_passed and semantic_ok
+    
+    # Test 7: Query Understanding
+    print_section("Query Understanding")
+    understanding_ok = test_query_understanding()
+    test_results["Query Understanding"] = understanding_ok
+    all_tests_passed = all_tests_passed and understanding_ok
+    
+    # Test 8: Conversational Recommendations
+    print_section("Conversational Recommendations")
+    conv_ok = test_conversational_recommendations()
+    test_results["Conversational"] = conv_ok
+    all_tests_passed = all_tests_passed and conv_ok
+    
     # Final Assessment
     print_header("FINAL ASSESSMENT")
     
@@ -219,6 +741,10 @@ def main():
         print("   • Collaborative filtering (user-based)")
         print("   • Hybrid recommendations (best of all)")
         print("   • Search and filtering capabilities")
+        print("   • Natural language query processing")
+        print("   • Semantic similarity search")
+        print("   • Intent detection and filter extraction")
+        print("   • Conversational recommendation interface")
         print()
         print("🚀 READY FOR DEPLOYMENT!")
     elif score_percentage >= 75:
@@ -235,7 +761,10 @@ def main():
     print("   • Collaborative filtering will improve as user data grows")
     print("   • Content-based recommendations work immediately")
     print("   • Hybrid approach ensures robust recommendations")
+    print("   • Natural language processing enables intuitive queries")
+    print("   • Semantic search provides contextual understanding")
     print("   • API includes proper error handling and validation")
+    print("   • Conversational interface supports interactive experiences")
     
     return all_tests_passed
 

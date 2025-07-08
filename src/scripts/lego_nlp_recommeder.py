@@ -7,16 +7,16 @@ import pandas as pd
 import torch
 from datetime import datetime
 
-# LangChain imports
-from langchain.embeddings import OpenAIEmbeddings, HuggingFaceEmbeddings
+# LangChain imports (updated to avoid deprecation warnings)
+from langchain_community.embeddings import OpenAIEmbeddings, HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import Chroma, FAISS
+from langchain_community.vectorstores import Chroma, FAISS
 from langchain.schema import Document
 from langchain.chains.llm import LLMChain
 
 from langchain_openai.chat_models.base import ChatOpenAI
 from langchain.prompts import PromptTemplate
-from langchain.callbacks import get_openai_callback
+from langchain_community.callbacks.manager import get_openai_callback
 from langchain.output_parsers import PydanticOutputParser, OutputFixingParser
 from pydantic import BaseModel, Field
 
@@ -49,21 +49,24 @@ class SearchFilters(BaseModel):
 
 class NLPRecommender:
     """Natural Language Processing for LEGO recommendations using LangChain"""
-    def __init__(self, dbcon, openai_flag: bool = False):
+    def __init__(self, dbcon, use_openai: bool = False):
         self.dbconn = dbcon
-        self.openai_flag = openai_flag
+        self.use_openai = use_openai
 
         # Initialize embeddings
-        if self.openai_flag:
+        if self.use_openai:
             self.embeddings = OpenAIEmbeddings()
             self.llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.0)
         else:
+            # Use free Hugging Face model for embeddings
             self.embeddings = HuggingFaceEmbeddings(
                 model_name="sentence-transformers/all-MiniLM-L6-v2",
-                model_kwargs={"device": "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"},
+                model_kwargs={
+                    "device": "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+                },
                 encode_kwargs={"normalize_embeddings": True}
             )
-            self.llm = None # No LLM for local embeddings
+            self.llm = None  # No LLM for local embeddings - using pattern matching instead
 
         self.vectorstore = None
         self.retriever = None
@@ -75,9 +78,12 @@ class NLPRecommender:
             'collection_advice': ['should i buy', 'worth it', 'good investment', 'collection']
         }
 
-    def prep_vectorDB(self):
+    def prep_vectorDB(self, limit_sets: Optional[int] = None, use_cloud: bool = False):
         """
         Prepare vector database with LEGO set descriptions and metadata
+        
+        :param limit_sets: Optional limit on number of sets to process (for faster setup)
+        :param use_cloud: If True, prepare data for cloud processing instead of local
         """
         logger.info("Preparing vector database...")
 
@@ -103,9 +109,17 @@ class NLPRecommender:
         LEFT JOIN part_categories cat ON p.part_cat_id = cat.id
         WHERE s.num_parts > 0
         GROUP BY s.set_num, s.name, s.year, s.num_parts, t.name, pt.name
+        ORDER BY s.num_parts DESC, s.year DESC
         """
+        
+        if limit_sets:
+            query += f" LIMIT {limit_sets}"
 
         df = pd.read_sql_query(query, self.dbconn)
+        
+        if df.empty:
+            logger.warning("No LEGO sets found in database")
+            return
 
         # Create documents with rich descriptions
         docs = []
@@ -127,23 +141,119 @@ class NLPRecommender:
             docs.append(Document(page_content=description, metadata=metadata))
 
         self.docs = docs
+        logger.info(f"Created {len(docs)} documents for vector database")
 
+        if use_cloud:
+            # For cloud processing, save documents and return
+            self._prepare_for_cloud_processing()
+            return
+        
+        # Local processing
+        self._create_local_vectorstore()
+    
+    def _prepare_for_cloud_processing(self):
+        """Prepare documents for cloud-based vector processing"""
+        import json
+        
+        # Save documents in a format suitable for cloud processing
+        cloud_data = []
+        for doc in self.docs:
+            cloud_data.append({
+                'content': doc.page_content,
+                'metadata': doc.metadata
+            })
+        
+        # Save to file for cloud upload
+        with open('embeddings/lego_sets_for_cloud.json', 'w') as f:
+            json.dump(cloud_data, f)
+        
+        logger.info(f"Prepared {len(cloud_data)} documents for cloud processing")
+        logger.info("Upload 'embeddings/lego_sets_for_cloud.json' to your cloud service")
+    
+    def _create_local_vectorstore(self):
+        """Create vector store locally (for development/small datasets)"""
         # Create vector store
-        if self.openai_flag:
+        if self.use_openai:
             self.vectorstore = Chroma.from_documents(
                 documents=self.docs,
                 embedding=self.embeddings,
                 persist_directory="./chroma_db"
             )
         else:
-            self.vectorstore = FAISS.from_documents(
-                documents=self.docs,
-                embedding=self.embeddings
-            )
+            # Process in smaller batches for FAISS to avoid memory issues
+            batch_size = 50  # Smaller batches for local processing
+            if len(self.docs) > batch_size:
+                logger.info(f"Processing {len(self.docs)} documents in batches of {batch_size}")
+                
+                # Create initial vector store with first batch
+                first_batch = self.docs[:batch_size]
+                self.vectorstore = FAISS.from_documents(
+                    documents=first_batch,
+                    embedding=self.embeddings
+                )
+                
+                # Add remaining documents in batches
+                for i in range(batch_size, len(self.docs), batch_size):
+                    batch = self.docs[i:i+batch_size]
+                    logger.info(f"Processing batch {i//batch_size + 1}/{(len(self.docs) + batch_size - 1)//batch_size}")
+                    batch_vectorstore = FAISS.from_documents(
+                        documents=batch,
+                        embedding=self.embeddings
+                    )
+                    self.vectorstore.merge_from(batch_vectorstore)
+            else:
+                self.vectorstore = FAISS.from_documents(
+                    documents=self.docs,
+                    embedding=self.embeddings
+                )
         
         self.retriever = self.vectorstore.as_retriever(search_kwargs={"k": 20})
         logger.info("Vector database prepared with %d documents", len(self.docs))
-
+    
+    def load_cloud_embeddings(self, embeddings_path: str, metadata_path: str):
+        """
+        Load pre-computed embeddings from cloud processing
+        
+        :param embeddings_path: Path to numpy array of embeddings
+        :param metadata_path: Path to JSON file with metadata
+        """
+        import json
+        import numpy as np
+        
+        # Load embeddings and metadata
+        embeddings = np.load(embeddings_path)
+        with open(metadata_path, 'r') as f:
+            metadata_list = json.load(f)
+        
+        # Create documents
+        documents = []
+        for i, meta in enumerate(metadata_list):
+            doc = Document(
+                page_content=meta['content'],
+                metadata=meta['metadata']
+            )
+            documents.append(doc)
+        
+        # Create FAISS index from pre-computed embeddings
+        dimension = embeddings.shape[1]
+        import faiss
+        
+        index = faiss.IndexFlatIP(dimension)  # Inner product for cosine similarity
+        index.add(embeddings.astype('float32'))
+        
+        # Create FAISS vectorstore with pre-computed index
+        self.vectorstore = FAISS(
+            embedding_function=self.embeddings,
+            index=index,
+            docstore=faiss.InMemoryDocstore({str(i): doc for i, doc in enumerate(documents)}),
+            index_to_docstore_id={i: str(i) for i in range(len(documents))}
+        )
+        
+        self.retriever = self.vectorstore.as_retriever(search_kwargs={"k": 20})
+        self.docs = documents
+        
+        logger.info(f"Loaded cloud-processed vector database with {len(documents)} documents")
+    
     def _create_set_description(self, row) -> str:
         """
         Create a rich description for a LEGO set based on its metadata.
@@ -602,7 +712,7 @@ class NLPRecommender:
     
     def load_embeddings(self, path: str):
         """Load vector store from disk"""
-        if self.openai_flag:
+        if self.use_openai:
             self.vectorstore = Chroma(
                 persist_directory=path,
                 embedding_function=self.embeddings
