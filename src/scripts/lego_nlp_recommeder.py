@@ -675,7 +675,6 @@ class NLPRecommender:
             'collection_advice': PromptTemplate(
                 template=(
                     "User query: {query}\n"
-                    "User query: {query}\sn"
                     "Current collection themes: {current_themes}\n"
                     "Collection size: {collection_size} sets\n\n"
                     "Available sets:\n"

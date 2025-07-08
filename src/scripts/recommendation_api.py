@@ -818,7 +818,7 @@ async def natural_language_search(
             )
         
         # Process the query
-        nl_result = nl_recommender.process_natural_query(nl_query.query)
+        nl_result = nl_recommender.process_nl_query(nl_query.query, user_context=None)
         
         # Perform semantic search
         search_results = nl_recommender.semantic_search(

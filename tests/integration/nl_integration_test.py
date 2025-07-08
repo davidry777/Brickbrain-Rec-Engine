@@ -180,8 +180,8 @@ class TestNaturalLanguageIntegration(unittest.TestCase):
             WHERE s.num_parts > 0
             LIMIT 10
             """
-            
-            df = self.nl_recommender._create_test_dataframe(test_query)
+            import pandas as pd
+            df = pd.read_sql_query(test_query, self.conn)
             self.assertGreater(len(df), 0)
             print(f"✅ Loaded {len(df)} test sets")
             
@@ -201,6 +201,8 @@ class TestNaturalLanguageIntegration(unittest.TestCase):
             
             description = self.nl_recommender._create_set_description(test_row)
             self.assertIsInstance(description, str)
+            self.assertIn('Test Set', description)
+            print(f"✅ Created description: {description[:100]}...")
             self.assertIn('Test Set', description)
             print(f"✅ Created description: {description[:100]}...")
     
@@ -268,8 +270,7 @@ class TestNaturalLanguageIntegration(unittest.TestCase):
                 self.assertIsInstance(result, NLQueryResult)
             except Exception as e:
                 print(f"⚠️ Exception for '{query[:50]}...': {type(e).__name__}")
-    
-    def test_03_api_health_check(self):
+    def test_09_api_health_check(self):
         """Test API health endpoint"""
         print("\n🏥 Testing API health check...")
         
@@ -280,6 +281,8 @@ class TestNaturalLanguageIntegration(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         
         health_data = response.json()
+        self.assertIn("status", health_data)
+        print(f"   API health: {health_data.get('status', 'unknown')}")
         self.assertIn("status", health_data)
         print(f"   API health: {health_data.get('status', 'unknown')}")
     
@@ -436,7 +439,11 @@ class TestNaturalLanguageIntegration(unittest.TestCase):
             print(f"   Sets available: {sets_count}")
             
             # Check themes data
-            cur.execute("SELECT COUNT(DISTINCT theme_name) FROM sets;")
+            cur.execute("""
+                        SELECT COUNT(DISTINCT t.name) 
+                        FROM sets s 
+                        JOIN themes t ON s.theme_id = t.id
+                        """)
             themes_count = cur.fetchone()[0]
             self.assertGreater(themes_count, 0, "No themes data available")
             print(f"   Themes available: {themes_count}")

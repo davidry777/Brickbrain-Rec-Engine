@@ -166,7 +166,7 @@ class BrickbrainNLDemo:
         try:
             response = self.session.post(
                 f"{self.base_url}/nlp/understand",
-                json=query
+                json={"query": query}
             )
             response.raise_for_status()
             data = response.json()

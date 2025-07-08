@@ -184,16 +184,28 @@ print_info "Downloading NLTK data..."
 docker-compose exec app conda run -n brickbrain-rec python -c "
 import nltk
 import ssl
+import certifi
+
+# Use certifi's certificates or create unverified context as fallback
 try:
-    _create_unverified_https_context = ssl._create_unverified_context
-except AttributeError:
-    pass
-else:
-    ssl._create_default_https_context = _create_unverified_https_context
-nltk.download('punkt', quiet=True)
-nltk.download('stopwords', quiet=True)
-nltk.download('wordnet', quiet=True)
-nltk.download('vader_lexicon', quiet=True)
+    nltk.download('punkt', quiet=True)
+    nltk.download('stopwords', quiet=True)
+    nltk.download('wordnet', quiet=True)
+    nltk.download('vader_lexicon', quiet=True)
+except Exception as e:
+    # If SSL fails, try with unverified context
+    import ssl
+    ssl._create_default_https_context = ssl._create_unverified_https_context
+    nltk.download('punkt', quiet=True)
+    nltk.download('stopwords', quiet=True)
+    nltk.download('wordnet', quiet=True)
+    nltk.download('vader_lexicon', quiet=True)
+print('NLTK data downloaded successfully')
+"
+    nltk.download('punkt', quiet=True)
+    nltk.download('stopwords', quiet=True)
+    nltk.download('wordnet', quiet=True)
+    nltk.download('vader_lexicon', quiet=True)
 print('NLTK data downloaded successfully')
 "
 
@@ -274,7 +286,9 @@ if [ "$DATASET_SIZE" -gt 5000 ]; then
     if [[ ! "$USE_LOCAL" =~ ^[Yy]$ ]]; then
         print_info "Preparing data for cloud processing..."
         docker-compose exec app conda run -n brickbrain-rec python -c "
+docker-compose exec app conda run -n brickbrain-rec python -c "
 import sys
+import os
 sys.path.append('/app/src/scripts')
 from lego_nlp_recommeder import NLPRecommender
 import psycopg2
@@ -299,23 +313,9 @@ try:
 except Exception as e:
     print(f'❌ Error preparing cloud data: {e}')
 "
+"
         print_status "Cloud data preparation complete"
         print_info "Skipping local vector database initialization"
-        print_info "After cloud processing, use load_cloud_embeddings() to load results"
-        SKIP_VECTOR_INIT=true
-    else
-        print_info "Proceeding with local processing (this may take 10-30 minutes)..."
-        SKIP_VECTOR_INIT=false
-    fi
-else
-    print_info "Small dataset detected - using local processing"
-    SKIP_VECTOR_INIT=false
-fi
-
-if [ "$SKIP_VECTOR_INIT" != "true" ]; then
-    print_info "Initializing vector database locally..."
-    
-    # Initialize vector database with timeout for large datasets
     timeout 1800 docker-compose exec app conda run -n brickbrain-rec python -c "
 import sys
 import os
@@ -345,6 +345,37 @@ try:
     
     # Use limited processing for large datasets to avoid timeouts
     if set_count > 5000:
+        print('Large dataset - processing subset for quick setup...')
+        nl_recommender.prep_vectorDB(limit_sets=1000)
+        print(f'Vector database initialized with 1000 sample sets (of {set_count} total)')
+        print('For full coverage, consider cloud processing (see cloud/README.md)')
+    else:
+        print('Processing all sets...')
+        nl_recommender.prep_vectorDB()
+        print(f'Vector database initialized with all {set_count} sets')
+    
+    conn.close()
+
+except psycopg2.Error as e:
+    print(f'Database error during vector initialization: {e}')
+    print('Please ensure LEGO data is loaded before initializing vectors.')
+    sys.exit(1)
+except ImportError as e:
+    print(f'Missing dependency for vector initialization: {e}')
+    print('Please ensure all NLP dependencies are installed.')
+    sys.exit(1)
+except Exception as e:
+    print(f'Unexpected error during vector initialization: {e}')
+    print('The system may work with limited NL search capabilities.')
+"
+except ImportError as e:
+    print(f'Missing dependency for vector initialization: {e}')
+    print('Please ensure all NLP dependencies are installed.')
+    sys.exit(1)
+except Exception as e:
+    print(f'Unexpected error during vector initialization: {e}')
+    print('The system may work with limited NL search capabilities.')
+"
         print('Large dataset - processing subset for quick setup...')
         nl_recommender.prep_vectorDB(limit_sets=1000)
         print(f'Vector database initialized with 1000 sample sets (of {set_count} total)')
