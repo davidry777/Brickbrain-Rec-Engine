@@ -184,3 +184,7 @@ data/rebrickable/part_relationships.csv
 data/rebrickable/parts.csv
 data/rebrickable/sets.csv
 data/rebrickable/themes.csv
+.DS_Store
+data/.DS_Store
+src/.DS_Store
+tests/.DS_Store
