@@ -415,8 +415,8 @@ else
 fi
 
 echo -e "\n${GREEN}🔧 Useful Commands:${NC}"
-echo "• Run all tests: ./run_all_tests.sh --all"
-echo "• Run specific tests: ./run_all_tests.sh --integration --performance"
+echo "• Run all tests: ./scripts/run_all_tests.sh --all"
+echo "• Run specific tests: ./scripts/run_all_tests.sh --integration --performance"
 echo "• Check API: curl http://localhost:8000/health"
 echo "• View logs: docker-compose logs app"
 echo "• Restart system: ./setup_and_start.sh"

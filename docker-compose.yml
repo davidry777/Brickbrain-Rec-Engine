@@ -27,8 +27,10 @@ services:
       # Add volumes for NL features
       - model_cache:/app/.cache
       - embeddings_data:/app/embeddings
+      - ollama_models:/app/.cache/ollama/models
     ports:
       - "8000:8000"
+      - "11434:11434"  # Ollama API port
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,21 +45,23 @@ services:
       - SENTENCE_TRANSFORMERS_HOME=/app/.cache/sentence-transformers
       - LANGCHAIN_CACHE_DIR=/app/.cache/langchain
       - TOKENIZERS_PARALLELISM=false
+      # Ollama configuration
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_MODELS=/app/.cache/ollama/models
     command: |
       bash -c "
         if ! conda env list | grep -q brickbrain-rec; then
           echo 'Creating conda environment...'
           conda env create -f environment.yml -n brickbrain-rec
         fi &&
-        echo 'Installing additional NL dependencies...' &&
-        conda run -n brickbrain-rec pip install --quiet \
-          langchain==0.1.16 \
-          langchain-community==0.0.34 \
-          sentence-transformers==2.6.1 \
-          faiss-cpu==1.8.0 \
-          chromadb==0.4.24 \
-          nltk==3.8.1 &&
-        echo 'Starting API with NL features...' &&
+        echo 'Environment ready with updated packages' &&
+        echo 'Setting up Ollama for NLP...' &&
+        curl -fsSL https://ollama.com/install.sh | sh &&
+        ollama serve &
+        sleep 5 &&
+        echo 'Downloading Mistral model...' &&
+        ollama pull mistral &
+        echo 'Starting API server...' &&
         conda run -n brickbrain-rec python src/scripts/recommendation_api.py
       "
     restart: unless-stopped
@@ -80,3 +84,4 @@ volumes:
   conda_envs:
   model_cache:
   embeddings_data:
+  ollama_models:

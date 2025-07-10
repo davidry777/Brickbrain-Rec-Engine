@@ -13,6 +13,8 @@ dependencies:
   - matplotlib>=3.8.0
   - seaborn>=0.13.0
   - pytorch>=2.0.0
+  - nltk==3.8.1
+  - spacy==3.7.2
   - jupyter
   - ipykernel
   - pytest
@@ -34,12 +36,15 @@ dependencies:
     - langchain>=0.3.26
     - langchain-openai==0.3.27
     - langchain-community>=0.3.27
+    - langchain-huggingface==0.3.0
+    - langchain-ollama==0.3.4
     - langgraph==0.5.1
     
     # LLM Providers and Integration
     - transformers>=4.53.1
     - accelerate>=0.25.0
     - huggingface-hub>=0.23.0
+    - ollama>=0.5.1
     
     # Vector Stores and Embeddings
     - chromadb==1.0.15

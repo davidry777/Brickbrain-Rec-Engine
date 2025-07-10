@@ -6,30 +6,30 @@ This directory contains comprehensive tests for the LEGO Recommendation Engine, 
 
 ### Run All Tests (Basic)
 ```bash
-./run_all_tests.sh
+../scripts/run_all_tests.sh
 ```
 
 ### Run All Tests (Including Optional)
 ```bash
-./run_all_tests.sh --all
+../scripts/run_all_tests.sh --all
 ```
 
 ### Run Specific Test Categories
 ```bash
 # Integration tests only
-./run_all_tests.sh --integration
+../scripts/run_all_tests.sh --integration
 
 # Performance tests only
-./run_all_tests.sh --performance
+../scripts/run_all_tests.sh --performance
 
 # Advanced NL tests only
-./run_all_tests.sh --nl-advanced
+../scripts/run_all_tests.sh --nl-advanced
 
 # Example scripts
-./run_all_tests.sh --examples
+../scripts/run_all_tests.sh --examples
 
 # Combine multiple categories
-./run_all_tests.sh --integration --performance
+../scripts/run_all_tests.sh --integration --performance
 ```
 
 ## 📁 Test Structure
@@ -159,7 +159,7 @@ DB_PASSWORD=brickbrain_password
 ./setup_and_start.sh
 
 # Then run tests
-./run_all_tests.sh --all
+../scripts/run_all_tests.sh --all
 ```
 
 ## 📊 Test Output
@@ -285,10 +285,10 @@ docker-compose up -d
 For CI/CD pipelines:
 ```bash
 # Basic validation (fast)
-./run_all_tests.sh
+../scripts/run_all_tests.sh
 
 # Full validation (comprehensive)
-./run_all_tests.sh --all
+../scripts/run_all_tests.sh --all
 ```
 
 ### Exit Codes
@@ -301,7 +301,7 @@ For CI/CD pipelines:
 - name: Run Tests
   run: |
     ./setup_and_start.sh
-    ./run_all_tests.sh --integration --performance
+    ./scripts/run_all_tests.sh --integration --performance
 ```
 
 ## 📚 Additional Resources

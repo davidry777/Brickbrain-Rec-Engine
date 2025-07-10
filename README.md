@@ -63,14 +63,16 @@ docker-compose up -d
 
 ### 3. Test the System
 ```bash
-# Run all tests (basic)
+# Run all tests (basic) - scripts are now in /scripts folder
+./scripts/run_all_tests.sh
+# or use the wrapper for backward compatibility
 ./run_all_tests.sh
 
 # Run all tests including optional ones
-./run_all_tests.sh --all
+./scripts/run_all_tests.sh --all
 
 # Run specific test categories
-./run_all_tests.sh --integration --performance --nl-advanced
+./scripts/run_all_tests.sh --integration --performance --nl-advanced
 ```
 
 ### 4. Try the Demo
@@ -113,16 +115,16 @@ The system includes comprehensive test coverage with streamlined execution:
 
 ```bash
 # Basic testing (unit tests, API health, core NL features)
-./run_all_tests.sh
+./scripts/run_all_tests.sh
 
 # Comprehensive testing (includes all optional tests)
-./run_all_tests.sh --all
+./scripts/run_all_tests.sh --all
 
 # Specific test categories
-./run_all_tests.sh --integration    # End-to-end workflows
-./run_all_tests.sh --performance    # Load and speed testing
-./run_all_tests.sh --nl-advanced    # Advanced NL features
-./run_all_tests.sh --examples       # Example scripts
+./scripts/run_all_tests.sh --integration    # End-to-end workflows
+./scripts/run_all_tests.sh --performance    # Load and speed testing
+./scripts/run_all_tests.sh --nl-advanced    # Advanced NL features
+./scripts/run_all_tests.sh --examples       # Example scripts
 
 # Combined categories
 ./run_all_tests.sh --integration --performance

@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 # For local embeddings (no API required)
 from sentence_transformers import SentenceTransformer
+from langchain_community.llms import Ollama as OllamaLLM
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class NLPRecommender:
     def __init__(self, dbcon, use_openai: bool = False):
         self.dbconn = dbcon
         self.use_openai = use_openai
+        self.device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
         # Initialize embeddings
         if self.use_openai:
@@ -59,14 +61,27 @@ class NLPRecommender:
             self.llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.0)
         else:
             # Use free Hugging Face model for embeddings
+            try:
+                from langchain_huggingface import HuggingFaceEmbeddings
+            except ImportError:
+                # Fallback to old import if new package not available
+                from langchain.embeddings import HuggingFaceEmbeddings
+            
             self.embeddings = HuggingFaceEmbeddings(
                 model_name="sentence-transformers/all-MiniLM-L6-v2",
                 model_kwargs={
-                    "device": "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+                    "device": self.device
                 },
                 encode_kwargs={"normalize_embeddings": True}
             )
-            self.llm = None  # No LLM for local embeddings - using pattern matching instead
+            
+            try:
+                from langchain_ollama import OllamaLLM
+            except ImportError:
+                # Fallback to old import if new package not available
+                from langchain.llms import OllamaLLM
+            
+            self.llm = OllamaLLM(model="mistral")  # Use Ollama as LLM
 
         self.vectorstore = None
         self.retriever = None
