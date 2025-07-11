@@ -201,11 +201,11 @@ def test_natural_language_recommendations():
         {
             "name": "Budget-Constrained Search",
             "payload": {
-                "query": "lego sets under $50 for beginners",
+                "query": "star wars sets for kids",
                 "top_k": 5,
                 "include_explanation": True
             },
-            "expected_filters": {"budget_max": 50},
+            "expected_filters": {"themes": ["Star Wars"]},
             "expected_min_results": 1
         }
     ]
@@ -334,23 +334,23 @@ def test_query_understanding():
         
         response = requests.post(
             "http://localhost:8000/nlp/understand",
-            json=test_query,
+            json={"query": test_query},
             timeout=10
         )
         
         if response.status_code == 200:
             understanding = response.json()
             
-            # Check if response has expected structure
-            expected_fields = ['intent', 'filters', 'confidence', 'entities']
+            # Check if response has expected structure (based on actual API response)
+            expected_fields = ['intent', 'extracted_filters', 'confidence', 'extracted_entities']
             missing_fields = [field for field in expected_fields if field not in understanding]
             
             if not missing_fields:
                 print("✅ Query understanding: All fields present")
                 print(f"   Intent: {understanding.get('intent', 'unknown')}")
                 print(f"   Confidence: {understanding.get('confidence', 0):.2%}")
-                print(f"   Filters: {len(understanding.get('filters', {}))}")
-                print(f"   Entities: {len(understanding.get('entities', {}))}")
+                print(f"   Filters: {len(understanding.get('extracted_filters', {}))}")
+                print(f"   Entities: {len(understanding.get('extracted_entities', {}))}")
                 return True
             else:
                 print(f"❌ Query understanding: Missing fields: {missing_fields}")

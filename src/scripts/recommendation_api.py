@@ -56,18 +56,28 @@ async def lifespan(app: FastAPI):
 
         # Initialize NLP recommender
         logger.info("Initializing natural language processor...")
-        nl_recommender = NLPRecommender(conn, openai_flag=False)
+        nl_recommender = NLPRecommender(conn, use_openai=False)
 
         # Load or create embeddings
         embeddings_path = "./embeddings/faiss_index"
         if os.path.exists(embeddings_path):
             logger.info("Loading existing embeddings...")
-            nl_recommender.load_embeddings(embeddings_path)
+            if not nl_recommender.load_embeddings(embeddings_path):
+                logger.warning("Failed to load existing embeddings, creating new ones...")
+                # Start with a smaller dataset for faster initialization
+                logger.info("Processing top 1000 sets by popularity for initial setup...")
+                nl_recommender.prep_vectorDB(limit_sets=1000)
+                os.makedirs("./embeddings", exist_ok=True)
+                nl_recommender.save_embeddings(embeddings_path)
+                logger.info("Initial embeddings created successfully")
         else:
-            logger.info("Creating new embeddings...")
-            nl_recommender.prep_vectorDB()
+            logger.info("Creating new embeddings (this may take a few minutes)...")
+            # Start with a smaller dataset for faster initialization
+            logger.info("Processing top 1000 sets by popularity for initial setup...")
+            nl_recommender.prep_vectorDB(limit_sets=1000)
             os.makedirs("./embeddings", exist_ok=True)
             nl_recommender.save_embeddings(embeddings_path)
+            logger.info("Initial embeddings created successfully")
 
         logger.info("Natural language processor initialized successfully")
 
@@ -975,7 +985,7 @@ async def conversational_recommendations(
         context.update(conv_query.context)
         
         # Process the current query with context
-        nl_result = nl_recommender.process_natural_query(
+        nl_result = nl_recommender.process_nl_query(
             conv_query.query,
             user_context=context
         )
@@ -1036,7 +1046,7 @@ async def understand_query(query: str = Body(..., embed=True)):
             )
         
         # Process query
-        nl_result = nl_recommender.process_natural_query(query)
+        nl_result = nl_recommender.process_nl_query(query, None)
         
         return {
             'original_query': query,
@@ -1168,7 +1178,7 @@ if __name__ == "__main__":
         "recommendation_api:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,
+        reload=False,  # Disable reload to prevent interruption during startup
         log_level="info"
     )
 

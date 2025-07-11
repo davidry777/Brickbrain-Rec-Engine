@@ -281,11 +281,19 @@ class BrickbrainNLDemo:
 
 def main():
     """Main demo function"""
+    import sys
+    
     demo = BrickbrainNLDemo()
     
     # Check if API is running
     if not demo.check_health():
         print("\nPlease start the API with: python src/scripts/recommendation_api.py")
+        return
+    
+    # Check if we're in automated test mode (no stdin available)
+    if not sys.stdin.isatty():
+        print("\nRunning in automated test mode - executing demo scenarios")
+        demo.run_demo_scenarios()
         return
     
     print("\nWelcome to the Brickbrain Natural Language Demo!")

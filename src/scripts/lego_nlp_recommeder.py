@@ -12,7 +12,6 @@ from langchain_community.embeddings import OpenAIEmbeddings, HuggingFaceEmbeddin
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma, FAISS
 from langchain.schema import Document
-from langchain.chains.llm import LLMChain
 
 from langchain_openai.chat_models.base import ChatOpenAI
 from langchain.prompts import PromptTemplate
@@ -54,6 +53,20 @@ class NLPRecommender:
         self.dbconn = dbcon
         self.use_openai = use_openai
         self.device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+        
+        # Initialize to None first
+        self.llm = None
+        self.embeddings = None
+        self.vectorstore = None
+        self.retriever = None
+        self.docs = []
+        self.intents = {
+            'search': ['find', 'search', 'looking for', 'show me', 'want', 'need'],
+            'recommend_similar': ['similar to', 'like', 'comparable', 'alternative to'],
+            'gift_recommendation': ['gift', 'present', 'birthday', 'christmas', 'for my nephew', 'for my son', 'for my daughter', 'for a child'],
+            'collection_advice': ['should i buy', 'worth it', 'good investment', 'collection', 'for my collection']
+        }
+        self.is_initialized = False
 
         # Initialize embeddings
         if self.use_openai:
@@ -77,21 +90,26 @@ class NLPRecommender:
             
             try:
                 from langchain_ollama import OllamaLLM
+                self.llm = OllamaLLM(model="mistral")  # Use Ollama as LLM
             except ImportError:
-                # Fallback to old import if new package not available
-                from langchain.llms import OllamaLLM
-            
-            self.llm = OllamaLLM(model="mistral")  # Use Ollama as LLM
+                try:
+                    # Fallback to old import if new package not available
+                    from langchain.llms import OllamaLLM
+                    self.llm = OllamaLLM(model="mistral")  # Use Ollama as LLM
+                except ImportError:
+                    logger.warning("Ollama not available, using text-based processing only")
+                    self.llm = None
+            except Exception as e:
+                logger.warning(f"Failed to initialize Ollama LLM: {e}")
+                logger.info("Falling back to text-based processing")
+                self.llm = None
+                    
+            if self.llm is None:
+                logger.info("Running in text-only mode without LLM")
+            else:
+                logger.info("LLM initialized successfully")
 
-        self.vectorstore = None
-        self.retriever = None
-        self.docs = []
-        self.intents = {
-            'search': ['find', 'search', 'looking for', 'show me', 'want', 'need'],
-            'recommend_similar': ['similar to', 'like', 'comparable', 'alternative to'],
-            'gift_recommendation': ['gift', 'present', 'birthday', 'christmas', 'for my', 'for a'],
-            'collection_advice': ['should i buy', 'worth it', 'good investment', 'collection']
-        }
+        self.is_initialized = True
 
     def prep_vectorDB(self, limit_sets: Optional[int] = None, use_cloud: bool = False):
         """
@@ -196,12 +214,13 @@ class NLPRecommender:
             )
         else:
             # Process in smaller batches for FAISS to avoid memory issues
-            batch_size = 50  # Smaller batches for local processing
+            batch_size = 100  # Slightly larger batches for better performance
             if len(self.docs) > batch_size:
-                logger.info(f"Processing {len(self.docs)} documents in batches of {batch_size}")
+                logger.info(f"Creating embeddings for {len(self.docs)} documents in batches of {batch_size}")
                 
                 # Create initial vector store with first batch
                 first_batch = self.docs[:batch_size]
+                logger.info(f"Processing batch 1/{(len(self.docs) + batch_size - 1)//batch_size}...")
                 self.vectorstore = FAISS.from_documents(
                     documents=first_batch,
                     embedding=self.embeddings
@@ -210,13 +229,16 @@ class NLPRecommender:
                 # Add remaining documents in batches
                 for i in range(batch_size, len(self.docs), batch_size):
                     batch = self.docs[i:i+batch_size]
-                    logger.info(f"Processing batch {i//batch_size + 1}/{(len(self.docs) + batch_size - 1)//batch_size}")
+                    batch_num = i//batch_size + 1
+                    total_batches = (len(self.docs) + batch_size - 1)//batch_size
+                    logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} docs)...")
                     batch_vectorstore = FAISS.from_documents(
                         documents=batch,
                         embedding=self.embeddings
                     )
                     self.vectorstore.merge_from(batch_vectorstore)
             else:
+                logger.info(f"Creating embeddings for {len(self.docs)} documents...")
                 self.vectorstore = FAISS.from_documents(
                     documents=self.docs,
                     embedding=self.embeddings
@@ -390,7 +412,7 @@ class NLPRecommender:
         intent = self._detect_intent(query)
 
         # Extract filters and entities
-        if self.llm:
+        if hasattr(self, 'llm') and self.llm:
             filters = self._extract_filters_llm(query)
             entities = self._extract_entities_llm(query)
         else:
@@ -414,12 +436,24 @@ class NLPRecommender:
     def _detect_intent(self, query: str) -> str:
         """
         Detect the intent of the user's query based on predefined intents.
+        Prioritize more specific intents over general ones.
 
         :param query: Natural language query string
         :return: Detected intent as a string
         """        
-        for intent, keywords in self.intents.items():
-            if any(keyword in query.lower() for keyword in keywords):
+        query_lower = query.lower()
+        
+        # Check more specific intents first (order matters)
+        intent_priority = [
+            'gift_recommendation',
+            'recommend_similar', 
+            'collection_advice',
+            'search'  # Most general, check last
+        ]
+        
+        for intent in intent_priority:
+            keywords = self.intents.get(intent, [])
+            if any(keyword in query_lower for keyword in keywords):
                 return intent
             
         return 'search'
@@ -432,7 +466,7 @@ class NLPRecommender:
         :return: SearchFilters object with extracted filters
         """
         # Implement local filter extraction logic
-        if not self.llm:
+        if not hasattr(self, 'llm') or not self.llm:
             return self._extract_filters_regex(query)
         
         # Creat output parser
@@ -448,23 +482,33 @@ class NLPRecommender:
             partial_variables={"format_instructions": parser.get_format_instructions()}
         )
 
-        # Create chain
-        chain = LLMChain(llm=self.llm, prompt=prompt)
-        
+        # Create chain using modern approach
         try:
-            # Run extraction
-            output = chain.run(query=query)
-            filters = parser.parse(output)
-            return filters.dict(exclude_none=True)
+            # Use new RunnableSequence approach (prompt | llm)
+            output = (prompt | self.llm).invoke({"query": query})
+            # Handle different output types
+            if hasattr(output, 'content'):
+                output_text = output.content
+            else:
+                output_text = str(output)
+            filters = parser.parse(output_text)
+            # Handle different Pydantic versions
+            try:
+                return filters.model_dump(exclude_none=True)  # Pydantic v2
+            except AttributeError:
+                return filters.dict(exclude_none=True)  # Pydantic v1
         except Exception as e:
             logger.error(f"LLM filter extraction failed: {e}")
             return self._extract_filters_regex(query)
         
     def _load_available_themes(self) -> List[str]:
-        """Load all available themes from database"""
-        query = "SELECT DISTINCT LOWER(name) as theme_name FROM themes WHERE name IS NOT NULL"
-        df = pd.read_sql_query(query, self.dbconn)
-        return df['theme_name'].tolist()
+        """Load all available themes from database (cached)"""
+        # Cache themes to avoid repeated database queries
+        if not hasattr(self, '_cached_themes'):
+            query = "SELECT DISTINCT LOWER(name) as theme_name FROM themes WHERE name IS NOT NULL"
+            df = pd.read_sql_query(query, self.dbconn)
+            self._cached_themes = df['theme_name'].tolist()
+        return self._cached_themes
             
     def _extract_filters_regex(self, query: str) -> Dict[str, Any]:
         """
@@ -476,6 +520,7 @@ class NLPRecommender:
         import re
         filters = {}
         piece_patterns = [
+            r'between\s+(\d+)\s+and\s+(\d+)\s*pieces?',
             r'(\d+)\s*(?:to|-)\s*(\d+)\s*pieces?',
             r'(?:under|less than|<)\s*(\d+)\s*pieces?',
             r'(?:over|more than|>)\s*(\d+)\s*pieces?',
@@ -485,7 +530,7 @@ class NLPRecommender:
         for pattern in piece_patterns:
             match = re.search(pattern, query.lower())
             if match:
-                if len(match.groups()) == 2:
+                if len(match.groups()) == 2 and match.group(2):
                     filters['min_pieces'] = int(match.group(1))
                     filters['max_pieces'] = int(match.group(2))
                 elif 'under' in pattern or 'less' in pattern:
@@ -541,7 +586,7 @@ class NLPRecommender:
         
     def _extract_entities_llm(self, query: str) -> Dict[str, Any]:
         """Extract entities using LLM"""
-        if not self.llm:
+        if not hasattr(self, 'llm') or not self.llm:
             return self._extract_entities_regex(query)
         
         # Would implement LLM-based entity extraction
@@ -610,8 +655,8 @@ class NLPRecommender:
          # Process the NL query
          nl_result = self.process_nl_query(query, None)
 
-         # Use the semantic query for search
-         results = self.retriever.get_relevant_documents(nl_result.semantic_query)
+         # Use the semantic query for search - using modern invoke method
+         results = self.retriever.invoke(nl_result.semantic_query)
 
          # Apply filters if provided
          filtered_results = self._apply_filters(results, nl_result.filters)
@@ -625,6 +670,7 @@ class NLPRecommender:
                  'year': doc.metadata['year'],
                  'num_parts': doc.metadata['num_parts'],
                  'theme': doc.metadata['theme'],
+                 'description': doc.page_content,  # Add description from document content
                  'score': doc.metadata.get('score', 0.0)
              })
          
@@ -726,16 +772,84 @@ class NLPRecommender:
     
     def load_embeddings(self, path: str):
         """Load vector store from disk"""
-        if self.use_openai:
-            self.vectorstore = Chroma(
-                persist_directory=path,
-                embedding_function=self.embeddings
-            )
-        elif os.path.exists(path):
-            self.vectorstore = FAISS.load_local(path, self.embeddings)
+        try:
+            if self.use_openai:
+                self.vectorstore = Chroma(
+                    persist_directory=path,
+                    embedding_function=self.embeddings
+                )
+            elif os.path.exists(path):
+                logger.info(f"Loading FAISS index from {path}")
+                # Check if files exist
+                index_file = os.path.join(path, "index.faiss")
+                pkl_file = os.path.join(path, "index.pkl")
+                
+                if os.path.exists(index_file) and os.path.exists(pkl_file):
+                    self.vectorstore = FAISS.load_local(
+                        path, 
+                        self.embeddings, 
+                        allow_dangerous_deserialization=True
+                    )
+                else:
+                    logger.warning(f"FAISS index files not found in {path}")
+                    return False
+            else:
+                logger.warning(f"Embeddings path {path} does not exist")
+                return False
+            
+            if self.vectorstore:
+                self.retriever = self.vectorstore.as_retriever(
+                    search_type="similarity",
+                    search_kwargs={"k": 20}
+                )
+                logger.info("Embeddings loaded successfully")
+                return True
+            else:
+                logger.warning("Failed to load embeddings")
+                return False
+        except Exception as e:
+            logger.error(f"Error loading embeddings: {e}")
+            return False
+    
+    def generate_recommendation_explanation(self, query: str, top_results: List[Dict]) -> str:
+        """
+        Generate a human-readable explanation for the recommendation results
         
-        if self.vectorstore:
-            self.retriever = self.vectorstore.as_retriever(
-                search_type="similarity",
-                search_kwargs={"k": 20}
-            )
+        :param query: Original query string
+        :param top_results: List of top recommendation results
+        :return: Explanation string
+        """
+        if not top_results:
+            return "No matching sets were found for your query."
+        
+        # Extract key themes and features from results
+        themes = list(set(result.get('theme', '') for result in top_results))
+        themes = [t for t in themes if t]  # Remove empty themes
+        
+        avg_pieces = sum(result.get('num_parts', 0) for result in top_results) / len(top_results)
+        
+        explanation_parts = [
+            f"Based on your search for '{query}', I found {len(top_results)} relevant LEGO sets."
+        ]
+        
+        if themes:
+            if len(themes) == 1:
+                explanation_parts.append(f"All recommendations are from the {themes[0]} theme.")
+            else:
+                explanation_parts.append(f"These sets span multiple themes: {', '.join(themes[:3])}.")
+        
+        if avg_pieces > 0:
+            if avg_pieces < 200:
+                complexity = "smaller, quick-build"
+            elif avg_pieces > 1000:
+                complexity = "large, detailed"
+            else:
+                complexity = "medium-sized"
+            
+            explanation_parts.append(f"The average set size is {int(avg_pieces)} pieces, making these {complexity} sets.")
+        
+        # Add specific mentions for standout features
+        if any('detail' in query.lower() for query in [query]):
+            explanation_parts.append("These sets were selected for their detailed construction and visual appeal.")
+        
+        return " ".join(explanation_parts)

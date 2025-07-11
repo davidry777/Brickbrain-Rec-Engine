@@ -48,6 +48,15 @@ services:
       # Ollama configuration
       - OLLAMA_HOST=0.0.0.0:11434
       - OLLAMA_MODELS=/app/.cache/ollama/models
+      # OpenBLAS settings to suppress warnings
+      - OPENBLAS_NUM_THREADS=1
+      - OPENBLAS_VERBOSE=0
+      - KMP_WARNINGS=0
+      - OMP_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - VECLIB_MAXIMUM_THREADS=1
+      - NUMEXPR_NUM_THREADS=1
+      - USE_OPENMP=0
     command: |
       bash -c "
         if ! conda env list | grep -q brickbrain-rec; then
@@ -62,7 +71,8 @@ services:
         echo 'Downloading Mistral model...' &&
         ollama pull mistral &
         echo 'Starting API server...' &&
-        conda run -n brickbrain-rec python src/scripts/recommendation_api.py
+        cd /app &&
+        conda run -n brickbrain-rec python -u src/scripts/recommendation_api.py
       "
     restart: unless-stopped
     healthcheck:
