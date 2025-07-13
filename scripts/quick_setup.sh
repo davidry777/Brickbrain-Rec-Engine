@@ -98,7 +98,7 @@ except ImportError as e:
     print('✅ Packages installed')
 " 2>/dev/null || print_warning "Could not verify all packages - may need manual installation"
 
-# Setup database schemas
+# Setup database schemas (optimized)
 print_info "Setting up database schemas..."
 docker-compose exec app conda run -n brickbrain-rec python -c "
 import psycopg2
@@ -113,91 +113,91 @@ conn = psycopg2.connect(
     port=int(os.getenv('DB_PORT', 5432))
 )
 
-# Read and execute schema files
-with open('src/db/rebrickable_schema.sql', 'r') as f:
-    rebrickable_schema = f.read()
-
+# Only create user interaction schema here - rebrickable schema will be created by loader
+print('Creating user interaction schema...')
 with open('src/db/user_interaction_schema.sql', 'r') as f:
     user_schema = f.read()
 
 cur = conn.cursor()
-cur.execute(rebrickable_schema)
 cur.execute(user_schema)
 conn.commit()
 
-print('Database schemas created successfully')
+print('✅ User interaction schema created successfully')
+print('📋 Rebrickable schema will be created during data loading for optimal performance')
 conn.close()
 "
 
-print_status "Database schemas created"
+print_status "Database schemas setup complete"
 
 # Load sample data if available
 if [ -d "data/rebrickable" ]; then
-    print_info "Loading Rebrickable data..."
-    docker-compose exec app conda run -n brickbrain-rec python src/scripts/upload_rebrickable_data.py
-    print_status "Rebrickable data loaded"
+    print_info "Loading Rebrickable data with optimized uploader..."
+    docker-compose exec app conda run -n brickbrain-rec python src/scripts/rebrickable_container_uploader.py
+    print_status "Rebrickable data loaded successfully"
 else
     print_warning "No data directory found. You'll need to load LEGO data manually."
 fi
 
-# Setup Ollama for NLP functionality
-print_info "Setting up Ollama for natural language processing..."
+# Setup Ollama inside Docker container
+print_info "Setting up Ollama inside Docker container..."
 
-# Check if Ollama is installed
-if ! command -v ollama &> /dev/null; then
-    print_info "Installing Ollama..."
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS
-        if command -v brew &> /dev/null; then
-            brew install ollama
-        else
-            print_warning "Homebrew not found. Please install Ollama manually from https://ollama.com/download"
+# Run the Ollama setup script inside the container
+print_info "Installing Ollama in container..."
+docker-compose exec app bash -c "
+    echo '📥 Installing curl first...'
+    apt-get update && apt-get install -y curl
+    
+    echo '🤖 Installing Ollama...'
+    curl -fsSL https://ollama.com/install.sh | sh
+    
+    echo '🚀 Starting Ollama service...'
+    ollama serve &
+    OLLAMA_PID=\$!
+    
+    echo '⏳ Waiting for Ollama to be ready...'
+    for i in {1..30}; do
+        if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
+            echo '✅ Ollama service is ready'
+            break
         fi
-    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        # Linux
-        curl -fsSL https://ollama.com/install.sh | sh
-    else
-        print_warning "Unsupported OS. Please install Ollama manually from https://ollama.com/download"
+        sleep 2
+    done
+    
+    if [ \$i -eq 30 ]; then
+        echo '❌ Ollama service failed to start'
+        exit 1
     fi
-else
-    print_status "Ollama is already installed"
-fi
-
-# Start Ollama service
-print_info "Starting Ollama service..."
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    brew services start ollama 2>/dev/null || ollama serve &
-else
-    systemctl start ollama 2>/dev/null || ollama serve &
-fi
-
-# Wait for Ollama to be ready
-print_info "Waiting for Ollama to be ready..."
-for i in {1..30}; do
-    if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
-        print_status "Ollama service is ready"
-        break
-    fi
-    sleep 2
-    echo -n "."
-done
-
-if [ $i -eq 30 ]; then
-    print_warning "Ollama service timeout - continuing without NLP features"
-else
-    # Download Mistral model
-    print_info "Downloading Mistral model for NLP (this may take a few minutes)..."
+    
+    echo '📦 Downloading Mistral model...'
     if ollama pull mistral; then
-        print_status "Mistral model downloaded successfully"
+        echo '✅ Mistral model downloaded successfully'
     else
-        print_warning "Failed to download Mistral model - NLP features may not work"
+        echo '❌ Failed to download Mistral model'
+        exit 1
     fi
+    
+    echo '🔍 Verifying model availability...'
+    if ollama list | grep -q mistral; then
+        echo '✅ Mistral model is available and ready to use'
+    else
+        echo '❌ Mistral model verification failed'
+        exit 1
+    fi
+    
+    echo '🎉 Ollama setup complete inside container!'
+    ollama list
+"
+
+if [ $? -eq 0 ]; then
+    print_status "Ollama setup completed successfully in container"
+else
+    print_warning "Ollama setup failed - NLP features may not work"
 fi
 
 # Wait for API to be ready
 print_info "Waiting for FastAPI server to be healthy..."
-for i in {1..60}; do
-    if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+for i in {1..30}; do
+    if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
         print_status "FastAPI server is healthy and ready"
         break
     fi
@@ -205,7 +205,7 @@ for i in {1..60}; do
     echo -n "."
 done
 
-if [ $i -eq 60 ]; then
+if [ $i -eq 30 ]; then
     print_warning "FastAPI server health check timeout - may still be starting"
     print_info "Check logs with: docker-compose logs app"
 fi

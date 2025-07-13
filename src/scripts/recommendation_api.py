@@ -38,32 +38,44 @@ async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown"""
     global recommendation_engine, nl_recommender
     
+    # Check if we should skip heavy initialization for faster startup
+    skip_heavy_init = os.getenv("SKIP_HEAVY_INITIALIZATION", "false").lower() == "true"
+    
     # Startup
     try:
         # Create a new connection that will be used by the recommendation engine
         conn = psycopg2.connect(**DB_PARAMS)
         recommendation_engine = HybridRecommender(conn)
         
-        # Initialize the content-based recommender features
-        logger.info("Preparing content-based features...")
-        recommendation_engine.content_recommender.prepare_features()
-        
-        # Initialize collaborative filtering (prepare user-item matrix)
-        logger.info("Preparing collaborative filtering...")
-        recommendation_engine.collaborative_recommender.prepare_user_item_matrix()
-        
-        logger.info("Recommendation engine initialized successfully")
+        if not skip_heavy_init:
+            # Initialize the content-based recommender features
+            logger.info("Preparing content-based features...")
+            recommendation_engine.content_recommender.prepare_features()
+            
+            # Initialize collaborative filtering (prepare user-item matrix)
+            logger.info("Preparing collaborative filtering...")
+            recommendation_engine.collaborative_recommender.prepare_user_item_matrix()
+            
+            logger.info("Recommendation engine initialized successfully")
 
-        # Initialize NLP recommender
-        logger.info("Initializing natural language processor...")
-        nl_recommender = NLPRecommender(conn, use_openai=False)
+            # Initialize NLP recommender
+            logger.info("Initializing natural language processor...")
+            nl_recommender = NLPRecommender(conn, use_openai=False)
 
-        # Load or create embeddings
-        embeddings_path = "./embeddings/faiss_index"
-        if os.path.exists(embeddings_path):
-            logger.info("Loading existing embeddings...")
-            if not nl_recommender.load_embeddings(embeddings_path):
-                logger.warning("Failed to load existing embeddings, creating new ones...")
+            # Load or create embeddings
+            embeddings_path = "./embeddings/faiss_index"
+            if os.path.exists(embeddings_path):
+                logger.info("Loading existing embeddings...")
+                if not nl_recommender.load_embeddings(embeddings_path):
+                    logger.warning("Failed to load existing embeddings, creating new ones...")
+                    # Start with a smaller dataset for faster initialization
+                    logger.info("Processing top 1000 sets by popularity for initial setup...")
+                    nl_recommender.prep_vectorDB(limit_sets=1000)
+                    os.makedirs("./embeddings", exist_ok=True)
+                    nl_recommender.save_embeddings(embeddings_path)
+                    logger.info("Initial embeddings created successfully")
+            else:
+                logger.info("Creating new embeddings (this may take a few minutes)...")
                 # Start with a smaller dataset for faster initialization
                 logger.info("Processing top 1000 sets by popularity for initial setup...")
                 nl_recommender.prep_vectorDB(limit_sets=1000)
@@ -71,13 +83,15 @@ async def lifespan(app: FastAPI):
                 nl_recommender.save_embeddings(embeddings_path)
                 logger.info("Initial embeddings created successfully")
         else:
-            logger.info("Creating new embeddings (this may take a few minutes)...")
-            # Start with a smaller dataset for faster initialization
-            logger.info("Processing top 1000 sets by popularity for initial setup...")
-            nl_recommender.prep_vectorDB(limit_sets=1000)
-            os.makedirs("./embeddings", exist_ok=True)
-            nl_recommender.save_embeddings(embeddings_path)
-            logger.info("Initial embeddings created successfully")
+            logger.info("Skipping heavy initialization for faster startup")
+            logger.info("Basic recommendation engine initialized successfully")
+            
+            # Initialize NLP recommender with minimal setup
+            logger.info("Initializing NLP recommender with minimal setup...")
+            nl_recommender = NLPRecommender(conn, use_openai=False)
+            logger.info("NLP recommender initialized (without embeddings)")
+            
+        logger.info("API server startup complete")
 
         logger.info("Natural language processor initialized successfully")
 
@@ -1174,12 +1188,17 @@ async def _update_user_rating_stats(user_id: int, dsn: str):
 
 if __name__ == "__main__":
     import uvicorn
+    print("✅ FastAPI app initialized successfully! Starting uvicorn server...")
+    print("🌐 Server will be available at http://0.0.0.0:8000")
+    print("📖 API documentation: http://0.0.0.0:8000/docs")
+    print("🔄 Health check: http://0.0.0.0:8000/health")
     uvicorn.run(
         "recommendation_api:app",
         host="0.0.0.0",
         port=8000,
         reload=False,  # Disable reload to prevent interruption during startup
-        log_level="info"
+        log_level="info",
+        access_log=True
     )
 
 def _generate_match_reasons(result: Dict, filters: Dict) -> List[str]:
