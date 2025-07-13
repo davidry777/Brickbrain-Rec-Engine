@@ -24,8 +24,12 @@ services:
     volumes:
       - .:/app
       - conda_envs:/opt/conda/envs
+      - model_cache:/app/.cache
+      - embeddings_data:/app/embeddings
+      - ollama_models:/app/.cache/ollama/models
     ports:
       - "8000:8000"
+      - "11434:11434"
     depends_on:
       postgres:
         condition: service_healthy
@@ -35,21 +39,61 @@ services:
       - DB_USER=brickbrain
       - DB_PASSWORD=brickbrain_password
       - DB_PORT=5432
+      - PYTHONPATH=${PYTHONPATH:-/app/src/scripts:/app}
+      - SKIP_HEAVY_INITIALIZATION=false
+      - TRANSFORMERS_CACHE=/app/.cache/huggingface
+      - SENTENCE_TRANSFORMERS_HOME=/app/.cache/sentence-transformers
+      - LANGCHAIN_CACHE_DIR=/app/.cache/langchain
+      - TOKENIZERS_PARALLELISM=false
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_MODELS=/app/.cache/ollama/models
+      - OPENBLAS_NUM_THREADS=1
+      - OPENBLAS_VERBOSE=0
+      - KMP_WARNINGS=0
+      - OMP_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - VECLIB_MAXIMUM_THREADS=1
+      - NUMEXPR_NUM_THREADS=1
+      - USE_OPENMP=0
     command: |
       bash -c "
+        echo '📦 Checking conda environment...' &&
         if ! conda env list | grep -q brickbrain-rec; then
+          echo '📦 Creating conda environment...'
           conda env create -f environment.yml -n brickbrain-rec
+        else
+          echo '✅ Conda environment already exists'
         fi &&
-        conda run -n brickbrain-rec python src/scripts/recommendation_api.py
+        echo '🔍 Testing basic imports...' &&
+        conda run -n brickbrain-rec python -c 'import fastapi; import uvicorn; print(\"✅ FastAPI imports OK\")' &&
+        echo '🔍 Testing database connection...' &&
+        conda run -n brickbrain-rec python -c 'import psycopg2; import os; conn = psycopg2.connect(host=os.getenv(\"DB_HOST\", \"postgres\"), database=os.getenv(\"DB_NAME\", \"brickbrain\"), user=os.getenv(\"DB_USER\", \"brickbrain\"), password=os.getenv(\"DB_PASSWORD\", \"brickbrain_password\"), port=int(os.getenv(\"DB_PORT\", 5432))); conn.close(); print(\"✅ Database connection OK\")' &&
+        echo '🚀 Starting API server...' &&
+        cd /app &&
+        export PYTHONPATH=/app/src/scripts:/app:$PYTHONPATH &&
+        echo '🌐 Server will be available at http://0.0.0.0:8000' &&
+        echo '📖 API documentation: http://0.0.0.0:8000/docs' &&
+        echo '🔄 Health check: http://0.0.0.0:8000/health' &&
+        echo '📊 Launching uvicorn...' &&
+        exec conda run -n brickbrain-rec uvicorn src.scripts.recommendation_api:app --host 0.0.0.0 --port 8000 --log-level info
       "
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\")' || exit 1"]
+      test: ["CMD-SHELL", "conda run -n brickbrain-rec python -c 'import requests; r=requests.get(\"http://localhost:8000/health\", timeout=5); exit(0 if r.status_code==200 else 1)' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
 
 volumes:
   postgres_data:
   conda_envs:
+  model_cache:
+  embeddings_data:
+  ollama_models:
