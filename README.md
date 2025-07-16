@@ -8,12 +8,14 @@ A production-ready, sophisticated recommendation system that helps LEGO enthusia
 - **🧠 Hybrid ML Engine**: Content-based + Collaborative filtering + Deep learning + Smart fallbacks
 - **🔥 Advanced NLP Processing**: LangChain-powered natural language understanding with GPT integration
 - **🗣️ Conversational AI**: Multi-turn dialogue with context awareness and memory
+- **🧠 Conversation Memory**: Persistent conversation context with user preference learning
 - **🔍 Semantic Search**: FAISS vector database with multiple embedding models (all-MiniLM-L6-v2, sentence-transformers)
 - **🎯 Intent Detection**: Understands gift recommendations, similar sets, collection advice, budget constraints
 - **📝 Query Understanding**: Extracts filters, entities, and semantic meaning from natural language
 - **🧪 Recommendation Confidence**: Dynamic confidence scoring and explanation generation
 - **🎛️ Fine-tuning**: Custom model training on user interaction data
 - **🔄 Real-time Learning**: Adaptive recommendations based on user feedback
+- **💭 Follow-up Understanding**: Interprets references to previous recommendations ("show me similar")
 
 ### 🚀 Production-Ready Infrastructure
 - **⚡ FastAPI Service**: Production-ready REST API with comprehensive endpoints
@@ -154,9 +156,12 @@ docker stack deploy -c deployments/docker-compose/production.yml brickbrain
 - `POST /search/natural` - **Natural language search** ("star wars sets for kids")
 - `POST /nlp/understand` - **Query understanding** and intent detection
 - `POST /recommendations/conversational` - **Multi-turn conversations** with context
+- `POST /nlp/conversation/memory` - **Conversation memory management** (add, clear, get context)
+- `POST /nlp/conversation/feedback` - **Record user feedback** for preference learning
 - `POST /sets/similar/semantic` - **Semantic similarity** search with descriptions
 - `POST /nlp/feedback` - **Natural language feedback processing**
 - `POST /ai/chat` - **Advanced conversational AI** with memory
+- `POST /ai/follow-up` - **Follow-up query handling** with context understanding
 
 ### 📊 Analytics & Insights
 - `GET /analytics/dashboard` - **Real-time analytics dashboard**
@@ -268,6 +273,9 @@ The system includes comprehensive test coverage across all components:
 - **Sentiment Analysis**: User feedback and review processing
 - **Query Expansion**: Automatic query enhancement with synonyms
 - **Multilingual Support**: 15+ languages with automatic translation
+- **Conversation Memory**: Persistent context across multiple interactions
+- **Follow-up Understanding**: Interprets references to previous queries and recommendations
+- **Preference Learning**: Learns user preferences from conversation history and feedback
 
 ### 6. **AI-Powered Intelligence**
 - **GPT Integration**: Advanced language understanding and generation
@@ -298,6 +306,17 @@ The system includes comprehensive test coverage across all components:
 - **Data Pipeline**: ETL processes for data ingestion and transformation
 - **Model Training**: Distributed training on large datasets
 - **Export/Import**: Bulk data operations and migrations
+
+### 🧠 Conversation Memory System
+- **Context Persistence**: Maintains conversation history across multiple interactions
+- **User Preference Learning**: Learns from user queries, feedback, and interactions
+- **Follow-up Query Handling**: Understands references like "show me similar" or "something smaller"
+- **Intent Enhancement**: Uses conversation context to improve intent detection accuracy
+- **Confidence Boosting**: Increases recommendation confidence with accumulated context
+- **Memory Management**: Automatic cleanup to prevent memory bloat (configurable limits)
+- **Session Tracking**: Maintains conversation state within user sessions
+- **Feedback Integration**: Records user likes/dislikes for continuous improvement
+- **Contextual Explanations**: Provides recommendations explanations with conversation context
 
 ### 🎯 Personalization Engine
 - **User Profiling**: Dynamic user preference learning
@@ -542,11 +561,39 @@ response = requests.post("http://localhost:8000/recommendations/explain", json={
 
 ### Natural Language & AI Examples
 ```python
-# Advanced conversational AI
+# Advanced conversational AI with memory
 response = requests.post("http://localhost:8000/ai/chat", json={
     "message": "I'm looking for something similar to the Hogwarts Castle but smaller",
     "user_id": 123,
     "conversation_id": "session_001"
+})
+
+# Context-aware search with conversation memory
+response = requests.post("http://localhost:8000/search/natural", json={
+    "query": "What about something with fewer pieces?",
+    "user_id": 123,
+    "use_context": True,
+    "top_k": 10
+})
+
+# Follow-up query handling
+response = requests.post("http://localhost:8000/ai/follow-up", json={
+    "query": "Show me similar sets to what you just recommended",
+    "user_id": 123,
+    "conversation_id": "session_001"
+})
+
+# Record user feedback for preference learning
+response = requests.post("http://localhost:8000/nlp/conversation/feedback", json={
+    "user_id": 123,
+    "set_num": "75192-1",
+    "feedback": "liked",
+    "rating": 5
+})
+
+# Get conversation context
+response = requests.get("http://localhost:8000/nlp/conversation/memory", params={
+    "user_id": 123
 })
 
 # Multi-modal search
@@ -638,6 +685,7 @@ CACHE_CONFIG = {
 ### Core Systems
 - ✅ **Recommendation Engine**: Multi-algorithm hybrid system with 78% accuracy
 - ✅ **Natural Language Processing**: Advanced NLP with GPT integration
+- ✅ **Conversation Memory**: Context-aware dialogue with user preference learning
 - ✅ **Semantic Search**: FAISS vector database with 1M+ embeddings
 - ✅ **Conversational AI**: Context-aware multi-turn dialogue system
 - ✅ **Real-time Analytics**: Live dashboard with comprehensive metrics
@@ -663,6 +711,7 @@ CACHE_CONFIG = {
 
 - [API Reference](docs/api/README.md) - Complete API documentation
 - [ML Models](docs/ml/README.md) - Machine learning model documentation
+- [Conversation Memory](docs/conversation_memory.md) - Conversation memory system guide
 - [Deployment Guide](docs/deployment/README.md) - Production deployment guide
 - [Security Guide](docs/security/README.md) - Security best practices
 - [Performance Tuning](docs/performance/README.md) - Optimization guide
@@ -727,6 +776,15 @@ if os.path.exists('/app/embeddings/faiss_index'):
     print('FAISS index found')
 else:
     print('FAISS index missing - run setup')
+"
+
+# Test conversation memory
+docker exec brickbrain-app conda run -n brickbrain-rec python -c "
+from src.scripts.lego_nlp_recommeder import NLPRecommender
+import sqlite3
+conn = sqlite3.connect(':memory:')
+recommender = NLPRecommender(conn, use_openai=False)
+print('Conversation memory initialized:', recommender.conversation_memory is not None)
 "
 
 # Test LLM integration
