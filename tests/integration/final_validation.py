@@ -404,6 +404,135 @@ def test_conversational_recommendations():
         print(f"❌ Conversational recommendations test failed: {e}")
         return False
 
+def test_entity_extraction_production():
+    """Test entity extraction in production environment"""
+    try:
+        print("Testing Entity Extraction...")
+        
+        entity_test_cases = [
+            {
+                "name": "Birthday Gift Query",
+                "query": "birthday gift for my 8-year-old son who loves space themes",
+                "expected_entities": ["recipient", "age", "occasion", "interest_category"],
+                "expected_values": {
+                    "recipient": "son",
+                    "age": 8,
+                    "occasion": "birthday",
+                    "interest_category": "space"
+                }
+            },
+            {
+                "name": "Experience Level Query",
+                "query": "challenging build for an expert adult builder",
+                "expected_entities": ["building_preference", "experience_level"],
+                "expected_values": {
+                    "building_preference": "challenging",
+                    "experience_level": "expert"
+                }
+            },
+            {
+                "name": "Feature-Specific Query",
+                "query": "weekend project with minifigures and lights",
+                "expected_entities": ["time_constraint", "special_features"],
+                "expected_values": {
+                    "time_constraint": "weekend_project",
+                    "special_features": ["minifigures", "lights"]
+                }
+            },
+            {
+                "name": "Complex Multi-Entity Query",
+                "query": "detailed Christmas present for my nephew who's an intermediate builder",
+                "expected_entities": ["building_preference", "occasion", "recipient", "experience_level"],
+                "expected_values": {
+                    "building_preference": "detailed",
+                    "occasion": "christmas",
+                    "recipient": "nephew",
+                    "experience_level": "intermediate"
+                }
+            }
+        ]
+        
+        all_passed = True
+        
+        for test in entity_test_cases:
+            try:
+                response = requests.post(
+                    "http://localhost:8000/nlp/understand",
+                    json={"query": test["query"]},
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    understanding = response.json()
+                    extracted_entities = understanding.get("extracted_entities", {})
+                    
+                    print(f"\n   {test['name']}: '{test['query']}'")
+                    print(f"     Extracted entities: {extracted_entities}")
+                    
+                    # Check if expected entity types are present
+                    entities_found = 0
+                    for entity_type in test["expected_entities"]:
+                        if entity_type in extracted_entities:
+                            entities_found += 1
+                            # Check specific values if provided
+                            if entity_type in test["expected_values"]:
+                                expected_value = test["expected_values"][entity_type]
+                                actual_value = extracted_entities[entity_type]
+                                
+                                if entity_type == "special_features":
+                                    # For lists, check if expected items are present
+                                    if isinstance(expected_value, list) and isinstance(actual_value, list):
+                                        if any(item in actual_value for item in expected_value):
+                                            print(f"     ✅ {entity_type}: {actual_value}")
+                                        else:
+                                            print(f"     ⚠️  {entity_type}: expected {expected_value}, got {actual_value}")
+                                elif entity_type == "age":
+                                    if actual_value == expected_value:
+                                        print(f"     ✅ {entity_type}: {actual_value}")
+                                    else:
+                                        print(f"     ⚠️  {entity_type}: expected {expected_value}, got {actual_value}")
+                                else:
+                                    # Case-insensitive string comparison
+                                    if str(actual_value).lower() == str(expected_value).lower():
+                                        print(f"     ✅ {entity_type}: {actual_value}")
+                                    else:
+                                        print(f"     ⚠️  {entity_type}: expected {expected_value}, got {actual_value}")
+                            else:
+                                print(f"     ✅ {entity_type}: {extracted_entities[entity_type]}")
+                    
+                    # Calculate entity extraction success rate
+                    extraction_rate = entities_found / len(test["expected_entities"])
+                    if extraction_rate >= 0.7:  # 70% or more entities found
+                        print(f"     ✅ Entity extraction: {entities_found}/{len(test['expected_entities'])} entities found")
+                    else:
+                        print(f"     ⚠️  Entity extraction: only {entities_found}/{len(test['expected_entities'])} entities found")
+                        all_passed = False
+                    
+                    # Check confidence score
+                    confidence = understanding.get("confidence", 0)
+                    if confidence > 0.3:  # Reasonable confidence threshold
+                        print(f"     ✅ Confidence: {confidence:.2f}")
+                    else:
+                        print(f"     ⚠️  Low confidence: {confidence:.2f}")
+                else:
+                    print(f"❌ {test['name']}: HTTP {response.status_code}")
+                    all_passed = False
+                    
+            except Exception as e:
+                print(f"❌ {test['name']}: {e}")
+                all_passed = False
+        
+        if all_passed:
+            print("\n✅ Entity extraction: All tests passed")
+        else:
+            print("\n⚠️  Entity extraction: Some tests had issues")
+        
+        return all_passed
+        
+    except Exception as e:
+        print(f"❌ Entity extraction test failed: {e}")
+        return False
+
 def main():
     print_header("FINAL PRODUCTION READINESS VALIDATION")
     print(f"🕐 Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -465,6 +594,12 @@ def main():
     test_results["Conversational"] = conv_ok
     all_tests_passed = all_tests_passed and conv_ok
     
+    # Test 9: Entity Extraction
+    print_section("Entity Extraction")
+    entity_ok = test_entity_extraction_production()
+    test_results["Entity Extraction"] = entity_ok
+    all_tests_passed = all_tests_passed and entity_ok
+    
     # Final Assessment
     print_header("FINAL ASSESSMENT")
     
@@ -496,6 +631,7 @@ def main():
         print("   • Semantic similarity search")
         print("   • Intent detection and filter extraction")
         print("   • Conversational recommendation interface")
+        print("   • Entity extraction and understanding")
         print()
         print("🚀 READY FOR DEPLOYMENT!")
     elif score_percentage >= 75:
@@ -513,7 +649,10 @@ def main():
     print("   • Content-based recommendations work immediately")
     print("   • Hybrid approach ensures robust recommendations")
     print("   • Natural language processing enables intuitive queries")
+    print("   • Enhanced entity extraction identifies recipients, ages, occasions, and preferences")
+    print("   • LLM-based entity extraction with robust regex fallback")
     print("   • Semantic search provides contextual understanding")
+    print("   • Confidence scoring reflects query understanding quality")
     print("   • API includes proper error handling and validation")
     print("   • Conversational interface supports interactive experiences")
     

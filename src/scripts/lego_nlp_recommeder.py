@@ -383,7 +383,10 @@ class NLPRecommender:
         entity_confidence = 0.0
         if entities:
             entity_types = len(entities)
-            entity_confidence = min(0.2, entity_types * 0.07)
+            # Give extra weight to key entities that improve recommendations
+            key_entities = ['recipient', 'age', 'occasion', 'experience_level']
+            key_entity_count = sum(1 for key in key_entities if key in entities)
+            entity_confidence = min(0.2, (entity_types * 0.03) + (key_entity_count * 0.05))
         confidence_factors.append(entity_confidence)
         
         # Query clarity confidence (0.0 - 0.1)
@@ -589,9 +592,98 @@ class NLPRecommender:
         if not hasattr(self, 'llm') or not self.llm:
             return self._extract_entities_regex(query)
         
-        # Would implement LLM-based entity extraction
-        # For now, falling back to regex
-        return self._extract_entities_regex(query)
+        # Create a comprehensive entity extraction prompt
+        entity_prompt = PromptTemplate(
+            template="""Extract relevant entities from the following LEGO set query. 
+            Focus on identifying specific entities that would help with LEGO set recommendations.
+
+            Query: {query}
+
+            Extract the following entities if mentioned in the query:
+            1. Recipient: Who is this for? (e.g., "son", "daughter", "nephew", "friend", "myself")
+            2. Age: Specific age mentioned for the recipient
+            3. Occasion: Special event or holiday (e.g., "birthday", "christmas", "graduation")
+            4. Building preference: Building style preferences (e.g., "detailed", "quick_build", "challenging")
+            5. Experience level: Builder experience (e.g., "beginner", "expert", "intermediate")
+            6. Interest category: General interests (e.g., "vehicles", "buildings", "fantasy", "space")
+            7. Time constraint: Available building time (e.g., "weekend project", "quick build")
+            8. Special features: Desired features (e.g., "motorized", "lights", "minifigures")
+
+            Return the results in JSON format with only the entities that are explicitly mentioned or clearly implied.
+            If an entity is not present, do not include it in the response.
+
+            Example output:
+            {{
+                "recipient": "son",
+                "age": 8,
+                "occasion": "birthday",
+                "building_preference": "detailed",
+                "experience_level": "beginner"
+            }}
+
+            JSON Response:""",
+            input_variables=["query"]
+        )
+        
+        try:
+            # Use the modern LangChain approach
+            output = (entity_prompt | self.llm).invoke({"query": query})
+            
+            # Handle different output types
+            if hasattr(output, 'content'):
+                output_text = output.content
+            else:
+                output_text = str(output)
+            
+            # Parse JSON response
+            import json
+            import re
+            
+            # Extract JSON from the response (in case there's extra text)
+            json_match = re.search(r'\{.*\}', output_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                entities = json.loads(json_str)
+                
+                # Validate and clean the entities
+                cleaned_entities = {}
+                for key, value in entities.items():
+                    if value is not None and value != "":
+                        # Convert age to integer if it's a string
+                        if key == "age" and isinstance(value, str):
+                            try:
+                                cleaned_entities[key] = int(value)
+                            except ValueError:
+                                continue
+                        # Normalize time_constraint values
+                        elif key == "time_constraint":
+                            if isinstance(value, str):
+                                # Normalize "weekend project" to "weekend_project"
+                                normalized_value = value.lower().replace(" ", "_")
+                                cleaned_entities[key] = normalized_value
+                            else:
+                                cleaned_entities[key] = value
+                        # Ensure special_features is always a list
+                        elif key == "special_features":
+                            if isinstance(value, str):
+                                cleaned_entities[key] = [value]
+                            elif isinstance(value, list):
+                                cleaned_entities[key] = value
+                            else:
+                                cleaned_entities[key] = [str(value)]
+                        else:
+                            cleaned_entities[key] = value
+                
+                logger.debug(f"LLM extracted entities: {cleaned_entities}")
+                return cleaned_entities
+            else:
+                logger.warning("No valid JSON found in LLM response, falling back to regex")
+                return self._extract_entities_regex(query)
+                
+        except Exception as e:
+            logger.error(f"LLM entity extraction failed: {e}")
+            logger.debug(f"LLM output was: {output_text if 'output_text' in locals() else 'No output'}")
+            return self._extract_entities_regex(query)
     
     def _extract_entities_regex(self, query: str) -> Dict[str, Any]:
         """Extract named entities using patterns"""
@@ -599,22 +691,113 @@ class NLPRecommender:
         entities = {}
         
         # Extract recipient info
-        recipient_match = re.search(r'for (?:my |a )?(\w+)', query.lower())
-        if recipient_match:
-            entities['recipient'] = recipient_match.group(1)
+        recipient_patterns = [
+            r'for (?:my |a )?(\w+)',
+            r'(?:my |a )(\d+)[\s-]*year[\s-]*old',
+            r'(\w+)\'s birthday',
+        ]
+        
+        for pattern in recipient_patterns:
+            recipient_match = re.search(pattern, query.lower())
+            if recipient_match:
+                entities['recipient'] = recipient_match.group(1)
+                break
+        
+        # Extract age more comprehensively
+        age_patterns = [
+            r'(\d+)[\s-]*(?:year|yr)[\s-]*old',
+            r'age\s*(\d+)',
+            r'(\d+)\s*years?\s*old',
+            r'for\s*a\s*(\d+)',
+        ]
+        
+        for pattern in age_patterns:
+            age_match = re.search(pattern, query.lower())
+            if age_match:
+                entities['age'] = int(age_match.group(1))
+                break
         
         # Extract occasion
-        occasions = ['birthday', 'christmas', 'holiday', 'anniversary']
-        for occasion in occasions:
-            if occasion in query.lower():
+        occasions = {
+            'birthday': ['birthday', 'b-day', 'bday'],
+            'christmas': ['christmas', 'xmas', 'holiday'],
+            'graduation': ['graduation', 'grad'],
+            'anniversary': ['anniversary'],
+            'gift': ['gift', 'present']
+        }
+        
+        for occasion, keywords in occasions.items():
+            if any(keyword in query.lower() for keyword in keywords):
                 entities['occasion'] = occasion
                 break
         
         # Extract building preferences
-        if 'detail' in query.lower():
-            entities['preference'] = 'detailed'
-        elif 'quick' in query.lower() or 'fast' in query.lower():
-            entities['preference'] = 'quick_build'
+        building_prefs = {
+            'detailed': ['detail', 'detailed', 'intricate', 'complex'],
+            'quick_build': ['quick', 'fast', 'simple', 'easy'],
+            'challenging': ['challenging', 'difficult', 'advanced', 'expert']
+        }
+        
+        for pref, keywords in building_prefs.items():
+            if any(keyword in query.lower() for keyword in keywords):
+                entities['building_preference'] = pref
+                break
+        
+        # Extract experience level
+        experience_levels = {
+            'beginner': ['beginner', 'new', 'first time', 'starting'],
+            'intermediate': ['intermediate', 'moderate', 'some experience'],
+            'expert': ['expert', 'advanced', 'experienced', 'pro']
+        }
+        
+        for level, keywords in experience_levels.items():
+            if any(keyword in query.lower() for keyword in keywords):
+                entities['experience_level'] = level
+                break
+        
+        # Extract interest categories
+        interests = {
+            'vehicles': ['car', 'truck', 'plane', 'ship', 'vehicle', 'transport'],
+            'buildings': ['house', 'building', 'castle', 'architecture'],
+            'space': ['space', 'rocket', 'spaceship', 'astronaut'],
+            'fantasy': ['dragon', 'wizard', 'magic', 'fantasy'],
+            'robots': ['robot', 'mech', 'android'],
+            'animals': ['animal', 'zoo', 'pet', 'wildlife']
+        }
+        
+        for category, keywords in interests.items():
+            if any(keyword in query.lower() for keyword in keywords):
+                entities['interest_category'] = category
+                break
+        
+        # Extract special features
+        special_features = []
+        feature_keywords = {
+            'motorized': ['motor', 'motorized', 'moves'],
+            'lights': ['light', 'led', 'glows'],
+            'minifigures': ['minifig', 'figure', 'character'],
+            'remote_control': ['remote', 'rc', 'control'],
+            'sound': ['sound', 'noise', 'music']
+        }
+        
+        for feature, keywords in feature_keywords.items():
+            if any(keyword in query.lower() for keyword in keywords):
+                special_features.append(feature)
+        
+        if special_features:
+            entities['special_features'] = special_features
+        
+        # Extract time constraints
+        time_patterns = {
+            'weekend_project': ['weekend', 'saturday', 'sunday'],
+            'quick_build': ['hour', 'quick', 'fast'],
+            'long_project': ['weeks', 'months', 'long project']
+        }
+        
+        for time_type, keywords in time_patterns.items():
+            if any(keyword in query.lower() for keyword in keywords):
+                entities['time_constraint'] = time_type
+                break
         
         return entities
     
@@ -636,8 +819,66 @@ class NLPRecommender:
         if filters.get('complexity'):
             query_parts.append(f"{filters['complexity']} complexity building experience")
         
+        # Add entity context for better semantic matching
         if entities.get('recipient'):
             query_parts.append(f"suitable for {entities['recipient']}")
+        
+        if entities.get('age'):
+            age = entities['age']
+            if age <= 6:
+                query_parts.append("simple builds for young children")
+            elif age <= 12:
+                query_parts.append("engaging builds for kids")
+            elif age <= 16:
+                query_parts.append("challenging builds for teenagers")
+            else:
+                query_parts.append("sophisticated builds for adults")
+        
+        if entities.get('occasion'):
+            occasion = entities['occasion']
+            if occasion == 'birthday':
+                query_parts.append("special birthday present")
+            elif occasion == 'christmas':
+                query_parts.append("holiday gift")
+            else:
+                query_parts.append(f"{occasion} gift")
+        
+        if entities.get('building_preference'):
+            pref = entities['building_preference']
+            if pref == 'detailed':
+                query_parts.append("intricate detailed construction")
+            elif pref == 'quick_build':
+                query_parts.append("quick easy assembly")
+            elif pref == 'challenging':
+                query_parts.append("complex challenging build")
+        
+        if entities.get('experience_level'):
+            level = entities['experience_level']
+            query_parts.append(f"appropriate for {level} builders")
+        
+        if entities.get('interest_category'):
+            category = entities['interest_category']
+            query_parts.append(f"{category} themed sets")
+        
+        if entities.get('special_features'):
+            features = entities['special_features']
+            # Ensure features is a list
+            if isinstance(features, str):
+                features = [features]
+            elif not isinstance(features, list):
+                features = [str(features)]
+            query_parts.append(f"featuring {', '.join(features)}")
+        
+        if entities.get('time_constraint'):
+            time_constraint = entities['time_constraint']
+            # Normalize time constraint format
+            normalized_constraint = str(time_constraint).lower().replace(" ", "_")
+            if normalized_constraint == 'weekend_project':
+                query_parts.append("suitable for weekend building")
+            elif normalized_constraint == 'quick_build':
+                query_parts.append("quick one-hour build")
+            elif normalized_constraint == 'long_project':
+                query_parts.append("extended building project")
         
         return " ".join(query_parts)
     
