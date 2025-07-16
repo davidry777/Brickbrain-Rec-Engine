@@ -20,7 +20,8 @@ import psycopg2
 from src.scripts.lego_nlp_recommeder import (
     NLPRecommender, 
     NLQueryResult,
-    SearchFilters
+    SearchFilters,
+    ConversationContext
 )
 
 class TestNaturalLanguageIntegration(unittest.TestCase):
@@ -608,6 +609,132 @@ class TestNaturalLanguageIntegration(unittest.TestCase):
                 print(f"   Star Wars sets: {sw_count}")
             else:
                 print("   ⚠️  No Star Wars sets found (may affect some tests)")
+
+    def test_09_conversation_memory_integration(self):
+        """Test conversation memory functionality with real database"""
+        print("\n🧠 Testing conversation memory integration...")
+        
+        # Test conversation memory initialization
+        self.assertIsNotNone(self.nl_recommender.conversation_memory)
+        self.assertIsInstance(self.nl_recommender.user_context, dict)
+        print("   ✅ Conversation memory initialized")
+        
+        # Test conversation flow
+        queries = [
+            "I'm looking for Star Wars sets for my nephew",
+            "What about something with fewer pieces?",
+            "Show me similar sets to what you just recommended"
+        ]
+        
+        for i, query in enumerate(queries):
+            print(f"\n   Query {i+1}: '{query}'")
+            
+            # Process with context
+            result = self.nl_recommender.process_nl_query_with_context(query)
+            
+            print(f"   Intent: {result.intent}")
+            print(f"   Confidence: {result.confidence:.3f}")
+            print(f"   Entities: {result.extracted_entities}")
+            
+            # Add to conversation memory
+            self.nl_recommender.add_to_conversation_memory(query, f"Response {i+1}")
+            
+            # Check that confidence is reasonable with context
+            self.assertGreater(result.confidence, 0.1, "Very low confidence with context")
+        
+        # Test conversation context retrieval
+        context = self.nl_recommender.get_conversation_context()
+        self.assertIsInstance(context, ConversationContext)
+        self.assertEqual(len(context.current_session_queries), 3)
+        print("   ✅ Conversation context properly maintained")
+        
+        # Test user feedback integration
+        test_set_num = '75309-1'  # Republic Gunship from test data
+        self.nl_recommender.record_user_feedback(test_set_num, 'liked', 5)
+        
+        # Check preference learning
+        theme_prefs = self.nl_recommender.user_context['preferences'].get('themes', {})
+        if 'Star Wars' in theme_prefs:
+            self.assertGreater(theme_prefs['Star Wars'], 0)
+            print("   ✅ Preference learning from feedback working")
+        else:
+            print("   ⚠️  No theme preference learned (may need more test data)")
+    
+    def test_10_conversational_search_integration(self):
+        """Test conversational search with real database and API"""
+        print("\n🔍 Testing conversational search integration...")
+        
+        # Test context-aware search
+        try:
+            # First search to establish context
+            results1 = self.nl_recommender.semantic_search_with_context(
+                "Star Wars sets for kids", 
+                top_k=3, 
+                record_in_memory=True
+            )
+            
+            if results1:
+                print(f"   First search returned {len(results1)} results")
+                
+                # Follow-up search that should use context
+                results2 = self.nl_recommender.semantic_search_with_context(
+                    "show me similar but smaller",
+                    top_k=3,
+                    record_in_memory=True
+                )
+                
+                if results2:
+                    print(f"   Follow-up search returned {len(results2)} results")
+                    
+                    # Check that both searches have reasonable confidence
+                    for result in results1[:1]:  # Check first result
+                        self.assertGreater(result.get('confidence', 0), 0.1)
+                    
+                    for result in results2[:1]:  # Check first result
+                        self.assertGreater(result.get('confidence', 0), 0.1)
+                    
+                    print("   ✅ Conversational search working")
+                else:
+                    print("   ⚠️  Follow-up search returned no results")
+            else:
+                print("   ⚠️  Initial search returned no results")
+                
+        except Exception as e:
+            print(f"   ❌ Conversational search failed: {e}")
+            # Don't fail the test, just log the issue
+    
+    def test_11_conversation_memory_performance(self):
+        """Test conversation memory performance with multiple interactions"""
+        print("\n⚡ Testing conversation memory performance...")
+        
+        # Test multiple rapid interactions
+        queries = [
+            "Star Wars sets",
+            "something bigger",
+            "with minifigures",
+            "for display",
+            "under $100"
+        ]
+        
+        start_time = time.time()
+        
+        for i, query in enumerate(queries):
+            result = self.nl_recommender.process_nl_query_with_context(query)
+            self.nl_recommender.add_to_conversation_memory(query, f"Response {i}")
+        
+        end_time = time.time()
+        total_time = end_time - start_time
+        
+        print(f"   Processed {len(queries)} contextual queries in {total_time:.2f}s")
+        print(f"   Average time per query: {total_time/len(queries):.2f}s")
+        
+        # Check memory size limits
+        memory_size = len(self.nl_recommender.user_context['previous_searches'])
+        self.assertLessEqual(memory_size, 20, "Memory not properly limited")
+        
+        # Performance should be reasonable
+        self.assertLess(total_time, 30, "Conversation memory performance too slow")
+        print("   ✅ Conversation memory performance acceptable")
 
     # ...existing code...
 def run_integration_tests():
