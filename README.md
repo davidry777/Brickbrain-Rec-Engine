@@ -43,203 +43,155 @@ A production-ready, sophisticated recommendation system that helps LEGO enthusia
 ```
 src/
 ├── scripts/
-│   ├── recommendation_api.py      # FastAPI service with NL endpoints
-│   ├── recommendation_system.py   # ML recommendation engine
-│   ├── lego_nlp_recommeder.py     # LangChain NLP processor
-│   ├── upload_rebrickable_data.py # Data loading utilities
-│   ├── analytics_service.py       # Analytics and metrics processing
-│   ├── batch_processor.py         # Bulk recommendation processing
-│   └── admin_service.py           # Administrative interface
-├── db/
-│   ├── rebrickable_schema.sql     # LEGO sets database schema
-│   ├── user_interaction_schema.sql # User data schema
-│   ├── analytics_schema.sql       # Analytics and metrics schema
-│   └── admin_schema.sql           # Admin and audit schema
-├── ml/
-│   ├── models/                    # Custom ML models and weights
-│   ├── embeddings/                # Pre-trained embedding models
-│   ├── training/                  # Model training scripts
-│   └── evaluation/                # Model evaluation and testing
-├── cache/
-│   ├── redis_config.py            # Redis caching configuration
-│   └── cache_strategies.py        # Intelligent caching strategies
-└── monitoring/
-    ├── metrics_collector.py       # Performance metrics collection
-    ├── health_checks.py           # System health monitoring
-    └── alerting.py                # Automated alerting system
+│   ├── recommendation_api.py         # FastAPI service with NL endpoints
+│   ├── recommendation_system.py      # ML recommendation engine
+│   ├── lego_nlp_recommeder.py        # LangChain NLP processor
+│   └── rebrickable_container_uploader.py # Data loading utilities
+└── db/
+    ├── rebrickable_schema.sql         # LEGO sets database schema
+    └── user_interaction_schema.sql    # User data schema
+scripts/
+├── quick_setup.sh                     # Complete system setup script
+├── run_all_tests.sh                   # Comprehensive testing script
+├── setup_ollama.sh                    # Ollama LLM setup
+├── setup_ollama_models.sh             # Ollama model installation
+└── nl_quick_reference.sh              # NL feature quick reference
 tests/
-├── unit/                          # Component-level tests
-├── integration/                   # End-to-end API tests including NL
-├── performance/                   # Load and scalability tests
-├── security/                      # Security and penetration tests
-└── ml/                           # Machine learning model tests
+├── unit/                              # Component-level tests
+│   ├── test_database.py
+│   ├── test_nlp_recommender.py
+│   └── test_recommendations.py
+├── integration/                       # End-to-end API tests including NL
+│   ├── nl_integration_test.py
+│   ├── final_validation.py
+│   ├── production_test_simple.py
+│   ├── validate_nlp_setup.py
+│   └── validate_production_readiness.py
+└── performance/                       # Load and scalability tests
+    └── production_scalability_test.py
 examples/
-├── example_client.py              # Complete API demonstration
-├── nl_demo_script.py              # Natural language demo
-├── batch_processing_demo.py       # Batch processing examples
-├── analytics_demo.py              # Analytics API examples
-└── admin_demo.py                  # Admin interface examples
+├── example_client.py                  # Complete API demonstration
+├── nl_demo_script.py                  # Natural language demo
+└── conversation_memory_demo.py        # Conversation memory examples
 data/
-├── rebrickable/                   # LEGO dataset (CSV files)
-├── user_generated/                # User reviews and ratings
-└── analytics/                     # Analytics data and reports
-embeddings/                        # Vector database storage
-├── faiss_index/                   # FAISS vector indices
-├── models/                        # Downloaded embedding models
-└── custom/                        # Custom-trained embeddings
-deployments/
-├── kubernetes/                    # K8s deployment manifests
-├── docker-compose/                # Docker compose configurations
-└── aws/                          # AWS deployment scripts
+└── rebrickable/                       # LEGO dataset (CSV files)
+    ├── colors.csv
+    ├── elements.csv
+    ├── inventories.csv
+    ├── inventory_minifigs.csv
+    ├── inventory_parts.csv
+    ├── inventory_sets.csv
+    ├── minifigs.csv
+    ├── part_categories.csv
+    ├── part_relationships.csv
+    ├── parts.csv
+    ├── sets.csv
+    └── themes.csv
+embeddings/                            # Vector database storage
+test_embeddings/                       # Test embedding storage
+├── index.faiss                        # FAISS vector indices
+└── index.pkl                          # Serialized indices
+docs/
+└── conversation_memory.md             # Conversation memory documentation
+logs/                                  # Application logs
 ```
 
 ## 🚀 Quick Start
 
-### Method 1: Complete Setup and Start (Recommended)
+### Recommended Setup (Docker Compose)
 ```bash
 # One command to set up everything and start the system
 ./scripts/quick_setup.sh
 
 # This script:
-# - Resets and sets up the database with all schemas
-# - Starts PostgreSQL, Redis, and FastAPI containers
+# - Starts PostgreSQL database container
 # - Sets up conda environment with all dependencies
 # - Installs natural language processing features
 # - Loads LEGO data and generates embeddings
-# - Initializes analytics and monitoring systems
 # - Starts the API server on http://localhost:8000
-# - Starts analytics dashboard on http://localhost:8001
 ```
 
-### Method 2: Manual Setup (Step by Step)
+### Manual Setup (Step by Step)
 ```bash
-# 1. Environment Setup
-./scripts/setup_environment.sh
+# 1. Start the database
+docker-compose up -d postgres
 
-# 2. Database Setup
-./scripts/setup_database.sh
-
-# 3. ML Models Setup
-./scripts/setup_ml_models.sh
-
-# 4. Set Ollama LLM (if using local inference)
+# 2. Set up Ollama LLM (for local inference)
 ./scripts/setup_ollama.sh
 ./scripts/setup_ollama_models.sh
 
-# 5. Start Services
-./scripts/start_services.sh
+# 3. Start the application
+docker-compose up -d app
+
+# Access the API at http://localhost:8000
+# View API documentation at http://localhost:8000/docs
 ```
 
-### Method 3: Production Deployment
+### Test the Setup
 ```bash
-# Kubernetes deployment
-kubectl apply -f deployments/kubernetes/
+# Run comprehensive tests
+./scripts/run_all_tests.sh
 
-# AWS deployment
-./deployments/aws/deploy.sh
-
-# Docker Swarm deployment
-docker stack deploy -c deployments/docker-compose/production.yml brickbrain
+# Test specific features
+./scripts/run_all_tests.sh --integration
+./scripts/run_all_tests.sh --performance
 ```
 
 ## 📋 API Endpoints
 
 ### 🎯 Core Recommendations
-- `POST /recommendations` - Get personalized recommendations
-- `POST /recommendations/batch` - **Batch recommendation processing**
-- `POST /recommendations/explain` - **Get recommendation explanations**
-- `POST /recommendations/similar` - Find similar sets with confidence scores
-- `POST /recommendations/trending` - Get trending and popular sets
-- `POST /recommendations/personalized` - **Advanced personalization with user context**
+- `POST /recommendations` - Get personalized recommendations using hybrid algorithm
+- `POST /search/natural` - **Natural language search** ("star wars sets for kids")
+- `POST /sets/similar/semantic` - **Semantic similarity** search with descriptions
+- `POST /recommendations/conversational` - **Conversational recommendations** with context
 
 ### 🧠 Natural Language & AI
-- `POST /search/natural` - **Natural language search** ("star wars sets for kids")
-- `POST /nlp/understand` - **Query understanding** and intent detection
-- `POST /recommendations/conversational` - **Multi-turn conversations** with context
-- `POST /nlp/conversation/memory` - **Conversation memory management** (add, clear, get context)
-- `POST /nlp/conversation/feedback` - **Record user feedback** for preference learning
-- `POST /sets/similar/semantic` - **Semantic similarity** search with descriptions
-- `POST /nlp/feedback` - **Natural language feedback processing**
-- `POST /ai/chat` - **Advanced conversational AI** with memory
-- `POST /ai/follow-up` - **Follow-up query handling** with context understanding
+- `POST /nlp/understand` - **Query understanding** and intent detection with structured filters
 
-### 📊 Analytics & Insights
-- `GET /analytics/dashboard` - **Real-time analytics dashboard**
-- `GET /analytics/recommendations` - Recommendation performance metrics
-- `GET /analytics/users` - User behavior and engagement analytics
-- `GET /analytics/sets` - Set popularity and trend analysis
-- `POST /analytics/ab-test` - **A/B testing for recommendations**
-- `GET /metrics/real-time` - Live system performance metrics
-
-### 👥 User Management & Social
+### 👥 User Management
 - `POST /users` - Create user account with preferences
-- `GET /users/{user_id}/profile` - Get comprehensive user profile
-- `POST /users/{user_id}/interactions` - Record ratings/interactions
-- `GET /users/{user_id}/recommendations/history` - **Recommendation history**
-- `POST /users/{user_id}/preferences/update` - **Update user preferences**
-- `GET /users/{user_id}/social` - **Social features and friend recommendations**
+- `GET /users/{user_id}/profile` - Get user profile information
+- `PUT /users/{user_id}/preferences` - Update user preferences
+- `POST /users/{user_id}/interactions` - Record user ratings and interactions
+- `POST /users/{user_id}/collection` - Track owned LEGO sets
+- `POST /users/{user_id}/wishlist` - Manage user wishlist
 
-### 🔍 Advanced Search & Discovery
-- `POST /search/sets` - Search LEGO sets with advanced filters
-- `POST /search/faceted` - **Faceted search with auto-suggestions**
-- `POST /search/multi-modal` - **Multi-modal search** (text + image)
-- `GET /search/autocomplete` - **Smart autocomplete suggestions**
-- `GET /themes` - List all available themes with metadata
-- `GET /sets/{set_num}` - Get detailed set information
-- `POST /search/visual` - **Visual similarity search**
+### 🔍 Search & Discovery
+- `POST /search/sets` - Search LEGO sets with filters (theme, pieces, age, etc.)
+- `GET /sets/{set_num}` - Get detailed information about a specific set
+- `GET /themes` - List all available LEGO themes
 
-### 🛍️ Collections & Wishlist
-- `POST /users/{user_id}/wishlist` - Manage wishlist with priorities
-- `POST /users/{user_id}/collection` - Track owned sets with conditions
-- `GET /users/{user_id}/collection/stats` - **Collection statistics and insights**
-- `POST /users/{user_id}/collection/recommendations` - **Collection-based recommendations**
-- `GET /users/{user_id}/collection/gaps` - **Identify collection gaps**
-
-### 🔧 Admin & Management
-- `GET /admin/dashboard` - **Administrative dashboard**
-- `POST /admin/users` - User management and moderation
-- `GET /admin/system/health` - **Comprehensive system health**
-- `POST /admin/cache/clear` - Cache management
-- `GET /admin/analytics/reports` - **Advanced analytics reports**
-- `POST /admin/ml/retrain` - **Trigger model retraining**
-
-### 🔐 Security & Authentication
-- `POST /auth/login` - User authentication
-- `POST /auth/refresh` - Token refresh
-- `POST /auth/logout` - User logout
-- `GET /auth/profile` - Get authenticated user profile
-- `POST /auth/password/reset` - Password reset functionality
+### 🔧 System & Monitoring
+- `GET /health` - API health check
+- `GET /metrics` - Basic system metrics and performance data
 
 ## 🧪 Testing
 
-The system includes comprehensive test coverage across all components:
+The system includes comprehensive test coverage across core components:
 
 ```bash
-# Basic testing (unit tests, API health, core NL features)
+# Run all tests
 ./scripts/run_all_tests.sh
 
-# Comprehensive testing (includes all optional tests)
-./scripts/run_all_tests.sh --all
-
 # Specific test categories
-./scripts/run_all_tests.sh --integration    # End-to-end workflows
-./scripts/run_all_tests.sh --performance    # Load and speed testing
-./scripts/run_all_tests.sh --nl-advanced    # Advanced NL features
-./scripts/run_all_tests.sh --security       # Security and penetration testing
-./scripts/run_all_tests.sh --ml             # Machine learning model testing
-./scripts/run_all_tests.sh --examples       # Example scripts
-
-# Production readiness testing
-./scripts/run_all_tests.sh --production     # Full production validation
+./scripts/run_all_tests.sh --integration    # End-to-end API tests
+./scripts/run_all_tests.sh --performance    # Load and performance testing
+./scripts/run_all_tests.sh --examples       # Example scripts validation
 ```
 
 ### Test Categories
-- **Unit Tests**: Database connectivity, recommendation algorithms, NLP components, caching
-- **Integration Tests**: End-to-end API workflows, NL processing, conversational AI, analytics
-- **Performance Tests**: Load testing, response time validation, semantic search speed, concurrent users
-- **Security Tests**: Authentication, authorization, input validation, SQL injection prevention
-- **ML Tests**: Model accuracy, embedding quality, recommendation relevance, A/B testing
-- **API Tests**: Endpoint availability, error handling, natural language endpoints, batch processing
+- **Unit Tests**: Database connectivity, recommendation algorithms, NLP components
+  - `test_database.py` - Database operations and schema validation
+  - `test_nlp_recommender.py` - Natural language processing functionality
+  - `test_recommendations.py` - Recommendation engine algorithms
+- **Integration Tests**: End-to-end API workflows and NL processing
+  - `nl_integration_test.py` - Natural language features integration
+  - `final_validation.py` - Complete system validation
+  - `production_test_simple.py` - Production readiness checks
+  - `validate_nlp_setup.py` - NLP system validation
+  - `validate_production_readiness.py` - Production deployment validation
+- **Performance Tests**: Load testing and response time validation
+  - `production_scalability_test.py` - Scalability and performance benchmarks
 
 ## 📊 Recommendation Systems
 
@@ -287,43 +239,31 @@ The system includes comprehensive test coverage across all components:
 ## 🎯 Advanced Features
 
 ### 🔍 Semantic Search & Embeddings
-- **Multiple Embedding Models**: sentence-transformers, all-MiniLM-L6-v2, custom fine-tuned models
-- **FAISS Vector Database**: High-performance similarity search with 1M+ vectors
+- **Sentence Transformers**: all-MiniLM-L6-v2 model for semantic understanding
+- **FAISS Vector Database**: High-performance similarity search with embeddings
 - **Semantic Similarity**: Content understanding beyond keyword matching
-- **Multi-modal Embeddings**: Text, image, and metadata fusion
-- **Dynamic Re-ranking**: Context-aware result reordering
-
-### 📊 Real-time Analytics
-- **Live Dashboard**: Real-time metrics and KPIs
-- **User Behavior Tracking**: Click-through rates, conversion metrics, engagement analysis
-- **A/B Testing Framework**: Systematic recommendation algorithm comparison
-- **Performance Monitoring**: Response times, error rates, system health
-- **Business Intelligence**: Revenue impact, user satisfaction, retention analysis
-
-### 🔄 Batch Processing
-- **Bulk Recommendations**: Process thousands of users simultaneously
-- **Scheduled Jobs**: Automated daily/weekly recommendation updates
-- **Data Pipeline**: ETL processes for data ingestion and transformation
-- **Model Training**: Distributed training on large datasets
-- **Export/Import**: Bulk data operations and migrations
+- **Local Model Support**: No external API dependencies for embeddings
 
 ### 🧠 Conversation Memory System
 - **Context Persistence**: Maintains conversation history across multiple interactions
 - **User Preference Learning**: Learns from user queries, feedback, and interactions
 - **Follow-up Query Handling**: Understands references like "show me similar" or "something smaller"
 - **Intent Enhancement**: Uses conversation context to improve intent detection accuracy
-- **Confidence Boosting**: Increases recommendation confidence with accumulated context
-- **Memory Management**: Automatic cleanup to prevent memory bloat (configurable limits)
-- **Session Tracking**: Maintains conversation state within user sessions
-- **Feedback Integration**: Records user likes/dislikes for continuous improvement
-- **Contextual Explanations**: Provides recommendations explanations with conversation context
+- **Simple Memory Management**: Lightweight conversation tracking with automatic cleanup
 
-### 🎯 Personalization Engine
-- **User Profiling**: Dynamic user preference learning
-- **Contextual Recommendations**: Time, location, device-aware suggestions
-- **Behavioral Segmentation**: User clustering and targeted recommendations
-- **Preference Evolution**: Tracking and adapting to changing user tastes
-- **Cross-domain Learning**: Knowledge transfer between different product categories
+### 🎯 Natural Language Processing
+- **Intent Classification**: Gift recommendations, similar sets, collection advice, budget constraints
+- **Entity Recognition**: Recipients, occasions, themes, price ranges, complexity levels
+- **Query Understanding**: Structured filter extraction from natural language
+- **LLM Integration**: OpenAI GPT and local Ollama support for advanced understanding
+- **Prompt Engineering**: Optimized prompts for LEGO recommendation scenarios
+
+### 🤖 Hybrid Recommendation Engine
+- **Content-Based Filtering**: Analyzes set features (theme, pieces, complexity, year)
+- **Collaborative Filtering**: User-item interaction analysis with matrix factorization
+- **Hybrid Approach**: Intelligent combination of multiple algorithms
+- **Cold Start Handling**: Effective recommendations for new users and items
+- **Confidence Scoring**: Transparent recommendation confidence and explanations
 
 ## 🏆 Production Ready
 
@@ -416,66 +356,41 @@ The system includes comprehensive test coverage across all components:
 
 ## 🐳 Docker Architecture
 
-The system uses a comprehensive containerized architecture:
+The system uses a containerized architecture for easy deployment:
 
 ```yaml
 services:
   postgres:        # PostgreSQL database with persistent storage
-  redis:           # Redis cache and message broker
-  app:             # Main FastAPI application
-  worker:          # Celery worker for background tasks
-  beat:            # Celery beat scheduler
-  nginx:           # Reverse proxy and load balancer
-  prometheus:      # Metrics collection
-  grafana:         # Dashboard and visualization
-  elasticsearch:   # Search engine and logging
-  kibana:          # Log visualization
+  app:             # Main FastAPI application with ML models
 ```
 
-### Production Features
-- **Health Checks**: Automated container health monitoring
-- **Persistent Volumes**: Data persistence across container restarts
-- **Resource Limits**: Memory and CPU constraints for stability
-- **Secrets Management**: Secure configuration and credentials
-- **Multi-stage Builds**: Optimized image sizes and security
+### Container Features
+- **Health Checks**: Automated PostgreSQL health monitoring
+- **Persistent Volumes**: Data persistence for database, models, and embeddings
+- **Environment Configuration**: Configurable database and API settings
+- **Model Caching**: Persistent storage for ML models and embeddings
+- **Conda Environment**: Python dependencies managed via conda
 
 ## 🚀 Deployment Options
 
-### 1. Development (Docker Compose)
+### Development (Docker Compose)
 ```bash
 # Quick development setup
 ./scripts/quick_setup.sh
 
 # Access services:
 # API: http://localhost:8000
-# Analytics: http://localhost:8001
-# Grafana: http://localhost:3000
+# API Documentation: http://localhost:8000/docs
+# Database: localhost:5432
 ```
 
-### 2. Production (Kubernetes)
-```bash
-# Deploy to Kubernetes cluster
-kubectl apply -f deployments/kubernetes/
+### Production Considerations
+The current implementation provides a solid foundation that can be extended for production:
 
-# Monitor deployment
-kubectl get pods -n brickbrain
-kubectl logs -f deployment/brickbrain-api
-```
-
-### 3. Cloud (AWS/GCP/Azure)
-```bash
-# AWS deployment with Terraform
-cd deployments/aws
-terraform init
-terraform apply
-
-# Includes:
-# - EKS cluster with auto-scaling
-# - RDS PostgreSQL with Multi-AZ
-# - ElastiCache Redis cluster
-# - Application Load Balancer
-# - CloudWatch monitoring
-```
+- **Database**: PostgreSQL container with persistent storage
+- **API**: FastAPI application with ML models
+- **Scaling**: Can be extended with load balancers and container orchestration
+- **Monitoring**: Basic health checks and metrics endpoint available
 
 ## 📝 Configuration
 
@@ -528,104 +443,81 @@ features:
 
 ## 🤝 API Usage Examples
 
-### Advanced Recommendation Examples
+### Core Recommendation Examples
 ```python
 import requests
 
-# Personalized recommendations with context
-response = requests.post("http://localhost:8000/recommendations/personalized", json={
+# Get personalized recommendations
+response = requests.post("http://localhost:8000/recommendations", json={
     "user_id": 123,
-    "context": {
-        "occasion": "birthday",
-        "recipient_age": 8,
-        "budget_max": 100,
-        "interests": ["space", "vehicles"]
-    },
+    "top_k": 10,
+    "algorithm": "hybrid"
+})
+
+# Natural language search
+response = requests.post("http://localhost:8000/search/natural", json={
+    "query": "star wars sets for 8 year old",
     "top_k": 10
 })
 
-# Batch recommendation processing
-response = requests.post("http://localhost:8000/recommendations/batch", json={
-    "user_ids": [123, 456, 789],
-    "recommendation_type": "hybrid",
+# Semantic similarity search
+response = requests.post("http://localhost:8000/sets/similar/semantic", json={
+    "query": "large detailed castle with many minifigures",
     "top_k": 5
 })
 
-# Recommendation explanations
-response = requests.post("http://localhost:8000/recommendations/explain", json={
-    "user_id": 123,
-    "set_num": "75192-1",
-    "recommendation_type": "hybrid"
-})
-```
-
-### Natural Language & AI Examples
-```python
-# Advanced conversational AI with memory
-response = requests.post("http://localhost:8000/ai/chat", json={
+# Conversational recommendations
+response = requests.post("http://localhost:8000/recommendations/conversational", json={
     "message": "I'm looking for something similar to the Hogwarts Castle but smaller",
-    "user_id": 123,
-    "conversation_id": "session_001"
-})
-
-# Context-aware search with conversation memory
-response = requests.post("http://localhost:8000/search/natural", json={
-    "query": "What about something with fewer pieces?",
-    "user_id": 123,
-    "use_context": True,
-    "top_k": 10
-})
-
-# Follow-up query handling
-response = requests.post("http://localhost:8000/ai/follow-up", json={
-    "query": "Show me similar sets to what you just recommended",
-    "user_id": 123,
-    "conversation_id": "session_001"
-})
-
-# Record user feedback for preference learning
-response = requests.post("http://localhost:8000/nlp/conversation/feedback", json={
-    "user_id": 123,
-    "set_num": "75192-1",
-    "feedback": "liked",
-    "rating": 5
-})
-
-# Get conversation context
-response = requests.get("http://localhost:8000/nlp/conversation/memory", params={
     "user_id": 123
 })
+```
 
-# Multi-modal search
-response = requests.post("http://localhost:8000/search/multi-modal", json={
-    "text_query": "medieval castle",
-    "image_url": "https://example.com/castle.jpg",
-    "top_k": 10
+### User Management Examples
+```python
+# Create user
+response = requests.post("http://localhost:8000/users", json={
+    "age": 25,
+    "interests": ["Star Wars", "Technic"],
+    "budget": 200,
+    "building_experience": "intermediate"
 })
 
-# Natural language feedback
-response = requests.post("http://localhost:8000/nlp/feedback", json={
-    "user_id": 123,
-    "set_num": "10242-1",
-    "feedback": "This set was perfect for my 10-year-old, but a bit challenging for younger kids"
+# Update user preferences
+response = requests.put("http://localhost:8000/users/123/preferences", json={
+    "interests": ["Harry Potter", "Architecture"],
+    "budget": 150
+})
+
+# Record user interaction
+response = requests.post("http://localhost:8000/users/123/interactions", json={
+    "set_num": "75192-1",
+    "rating": 5,
+    "interaction_type": "purchase"
 })
 ```
 
-### Analytics & Admin Examples
+### Search and Discovery Examples
 ```python
-# Real-time analytics
-response = requests.get("http://localhost:8000/analytics/dashboard")
-
-# A/B testing setup
-response = requests.post("http://localhost:8000/analytics/ab-test", json={
-    "test_name": "recommendation_algorithm_v2",
-    "control_algorithm": "hybrid",
-    "treatment_algorithm": "deep_learning",
-    "traffic_split": 0.2
+# Advanced set search
+response = requests.post("http://localhost:8000/search/sets", json={
+    "themes": ["Star Wars"],
+    "min_pieces": 500,
+    "max_pieces": 2000,
+    "min_age": 8,
+    "max_age": 14
 })
 
-# System health monitoring
-response = requests.get("http://localhost:8000/admin/system/health")
+# Get set details
+response = requests.get("http://localhost:8000/sets/75192-1")
+
+# Get all themes
+response = requests.get("http://localhost:8000/themes")
+
+# NLP query understanding
+response = requests.post("http://localhost:8000/nlp/understand", json={
+    "query": "affordable castle sets for teenagers"
+})
 ```
 
 ## 🔧 Advanced Configuration
@@ -680,42 +572,47 @@ CACHE_CONFIG = {
 
 ## 🏆 System Status
 
-**🎉 ENTERPRISE PRODUCTION READY!**
+**🎉 CORE FEATURES IMPLEMENTED & TESTED!**
 
 ### Core Systems
-- ✅ **Recommendation Engine**: Multi-algorithm hybrid system with 78% accuracy
-- ✅ **Natural Language Processing**: Advanced NLP with GPT integration
+- ✅ **Recommendation Engine**: Hybrid ML system with content-based and collaborative filtering
+- ✅ **Natural Language Processing**: LangChain-powered query understanding with local LLM support
 - ✅ **Conversation Memory**: Context-aware dialogue with user preference learning
-- ✅ **Semantic Search**: FAISS vector database with 1M+ embeddings
-- ✅ **Conversational AI**: Context-aware multi-turn dialogue system
-- ✅ **Real-time Analytics**: Live dashboard with comprehensive metrics
-- ✅ **Batch Processing**: Distributed processing for large-scale operations
+- ✅ **Semantic Search**: FAISS vector database with sentence-transformers embeddings
+- ✅ **Database Integration**: PostgreSQL with complete LEGO dataset (25,216+ sets)
+- ✅ **API Framework**: FastAPI with automatic OpenAPI documentation
 
-### Advanced Features
-- ✅ **A/B Testing**: Systematic algorithm comparison and optimization
-- ✅ **Multi-modal Search**: Text, image, and metadata fusion
-- ✅ **Personalization**: Dynamic user modeling and preference learning
-- ✅ **Security**: Enterprise-grade authentication and authorization
-- ✅ **Monitoring**: Comprehensive observability and alerting
-- ✅ **Scalability**: Kubernetes-ready with horizontal scaling
+### Implemented Features
+- ✅ **Multi-Algorithm Recommendations**: Content-based, collaborative filtering, and hybrid approaches
+- ✅ **Natural Language Search**: Query understanding with intent detection and entity extraction
+- ✅ **User Management**: Profile creation, preferences, ratings, and interaction tracking
+- ✅ **Advanced Search**: Multi-criteria filtering (theme, pieces, age, complexity)
+- ✅ **Conversational AI**: Context-aware recommendations with follow-up understanding
+- ✅ **Vector Search**: Semantic similarity using FAISS and sentence transformers
 
-### Production Validation
-- ✅ **Performance**: <500ms response times, 50+ RPS throughput
-- ✅ **Reliability**: 99.9% uptime with graceful error handling
-- ✅ **Security**: Penetration tested, OWASP compliance
-- ✅ **Scalability**: Load tested with 1000+ concurrent users
-- ✅ **Quality**: 89% user satisfaction, 85% search relevance
-- ✅ **Compliance**: GDPR, CCPA, audit trails, data retention
+### Production Ready Components
+- ✅ **Performance**: Fast response times with efficient database queries
+- ✅ **Reliability**: Comprehensive error handling and graceful degradation
+- ✅ **Testing**: Unit tests, integration tests, and production readiness validation
+- ✅ **Documentation**: Complete API documentation and setup guides
+- ✅ **Containerization**: Docker Compose setup with health checks
+
+### Future Enhancements (Not Yet Implemented)
+- 🚧 **Advanced Analytics**: Real-time dashboards and A/B testing
+- 🚧 **Enterprise Security**: Authentication, authorization, and rate limiting
+- 🚧 **Batch Processing**: Large-scale recommendation generation
+- 🚧 **Multi-modal Search**: Image and visual similarity search
+- 🚧 **Social Features**: User collaboration and community features
 
 ## 📚 Documentation
 
-- [API Reference](docs/api/README.md) - Complete API documentation
-- [ML Models](docs/ml/README.md) - Machine learning model documentation
-- [Conversation Memory](docs/conversation_memory.md) - Conversation memory system guide
-- [Deployment Guide](docs/deployment/README.md) - Production deployment guide
-- [Security Guide](docs/security/README.md) - Security best practices
-- [Performance Tuning](docs/performance/README.md) - Optimization guide
-- [Troubleshooting](docs/troubleshooting/README.md) - Common issues and solutions
+- [Conversation Memory](docs/conversation_memory.md) - Conversation memory system implementation guide
+- [API Documentation](http://localhost:8000/docs) - Interactive OpenAPI documentation (when running)
+- [Examples](examples/) - Complete API demonstration scripts
+  - `example_client.py` - Basic API usage examples
+  - `nl_demo_script.py` - Natural language processing demo
+  - `conversation_memory_demo.py` - Conversation memory examples
+- [Tests](tests/) - Comprehensive test suite with examples
 
 ## 🔧 Troubleshooting
 
@@ -807,54 +704,46 @@ curl -X POST "http://localhost:8000/recommendations" \
   -d '{"user_id": 1, "top_k": 5}'
 ```
 
-## 🛠️ Streamlined Scripts
+## 🛠️ Available Scripts
 
 ### 1. `scripts/quick_setup.sh` - Complete System Setup
 ```bash
-# One-command enterprise setup
-./scripts/quick_setup.sh --production
+# Complete development setup
+./scripts/quick_setup.sh
 
-# Development setup
-./scripts/quick_setup.sh --development
-
-# Minimal setup (core features only)
-./scripts/quick_setup.sh --minimal
+# This script handles:
+# - Starting PostgreSQL database
+# - Setting up conda environment
+# - Installing Python dependencies
+# - Loading LEGO dataset
+# - Generating embeddings
+# - Starting the API server
 ```
 
 ### 2. `scripts/run_all_tests.sh` - Comprehensive Testing
 ```bash
-# Production readiness validation
-./scripts/run_all_tests.sh --production
-
-# Full test suite
-./scripts/run_all_tests.sh --all
+# Run all available tests
+./scripts/run_all_tests.sh
 
 # Specific test categories
-./scripts/run_all_tests.sh --security --performance --ml
+./scripts/run_all_tests.sh --integration
+./scripts/run_all_tests.sh --performance
+./scripts/run_all_tests.sh --examples
 ```
 
-### 3. `scripts/deploy.sh` - Production Deployment
+### 3. `scripts/setup_ollama.sh` & `scripts/setup_ollama_models.sh` - Local LLM Setup
 ```bash
-# Deploy to Kubernetes
-./scripts/deploy.sh --platform kubernetes --environment production
+# Install and configure Ollama for local LLM inference
+./scripts/setup_ollama.sh
 
-# Deploy to AWS
-./scripts/deploy.sh --platform aws --environment production
-
-# Deploy to local Docker Swarm
-./scripts/deploy.sh --platform swarm --environment staging
+# Download and setup LLM models
+./scripts/setup_ollama_models.sh
 ```
 
-### 4. `scripts/monitor.sh` - System Monitoring
+### 4. `scripts/nl_quick_reference.sh` - Natural Language Features
 ```bash
-# Real-time system monitoring
-./scripts/monitor.sh --real-time
-
-# Performance analysis
-./scripts/monitor.sh --performance
-
-# Health check
-./scripts/monitor.sh --health
+# Quick reference for NL features and capabilities
+./scripts/nl_quick_reference.sh
 ```
 
 ---
