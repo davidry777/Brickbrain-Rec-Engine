@@ -41,7 +41,7 @@ services:
       - DB_PORT=5432
       - PYTHONPATH=${PYTHONPATH:-/app/src/scripts:/app}
       - SKIP_HEAVY_INITIALIZATION=false
-      - TRANSFORMERS_CACHE=/app/.cache/huggingface
+      - HF_HOME=/app/.cache/huggingface
       - SENTENCE_TRANSFORMERS_HOME=/app/.cache/sentence-transformers
       - LANGCHAIN_CACHE_DIR=/app/.cache/langchain
       - TOKENIZERS_PARALLELISM=false
@@ -57,6 +57,8 @@ services:
       - USE_OPENMP=0
     command: |
       bash -c "
+        echo '📦 Installing system dependencies...' &&
+        apt-get update && apt-get install -y curl &&
         echo '📦 Checking conda environment...' &&
         if ! conda env list | grep -q brickbrain-rec; then
           echo '📦 Creating conda environment...'
@@ -79,7 +81,7 @@ services:
       "
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "conda run -n brickbrain-rec python -c 'import requests; r=requests.get(\"http://localhost:8000/health\", timeout=5); exit(0 if r.status_code==200 else 1)' || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

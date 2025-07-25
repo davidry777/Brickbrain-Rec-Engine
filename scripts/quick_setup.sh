@@ -65,19 +65,25 @@ fi
 print_info "Starting application container..."
 docker-compose up -d app
 
-# Wait for conda environment to be created
-print_info "Waiting for conda environment setup..."
+# Wait for app container to be healthy (uses Docker's built-in health check)
+print_info "Waiting for app container to be healthy..."
 for i in {1..60}; do
-    if docker-compose exec app conda env list | grep -q brickbrain-rec; then
-        print_status "Conda environment 'brickbrain-rec' is ready"
+    health_status=$(docker inspect --format='{{.State.Health.Status}}' brickbrain-app 2>/dev/null || echo "starting")
+    if [ "$health_status" = "healthy" ]; then
+        print_status "App container is healthy and FastAPI server is running"
         break
+    elif [ "$health_status" = "unhealthy" ]; then
+        print_error "App container health check failed"
+        print_info "Check logs with: docker-compose logs app"
+        exit 1
     fi
     sleep 5
     echo -n "."
 done
 
 if [ $i -eq 60 ]; then
-    print_error "Conda environment setup failed"
+    print_error "App container failed to become healthy within 5 minutes"
+    print_info "Check logs with: docker-compose logs app"
     exit 1
 fi
 
@@ -104,6 +110,7 @@ docker-compose exec app conda run -n brickbrain-rec python -c "
 import psycopg2
 import os
 
+print('Connecting to database...')
 # Database connection
 conn = psycopg2.connect(
     host=os.getenv('DB_HOST', 'postgres'),
@@ -113,17 +120,35 @@ conn = psycopg2.connect(
     port=int(os.getenv('DB_PORT', 5432))
 )
 
-# Only create user interaction schema here - rebrickable schema will be created by loader
-print('Creating user interaction schema...')
-with open('src/db/user_interaction_schema.sql', 'r') as f:
-    user_schema = f.read()
-
+print('Creating minimal user interaction schema...')
+# Create only essential tables to avoid hanging on large schema
 cur = conn.cursor()
-cur.execute(user_schema)
-conn.commit()
 
-print('✅ User interaction schema created successfully')
-print('📋 Rebrickable schema will be created during data loading for optimal performance')
+# Create basic users table
+cur.execute('''
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    email VARCHAR(255) UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+''')
+
+# Create basic user interactions table
+cur.execute('''
+CREATE TABLE IF NOT EXISTS user_interactions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER,
+    set_num VARCHAR(20),
+    interaction_type VARCHAR(20),
+    rating INTEGER CHECK (rating BETWEEN 1 AND 5),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+''')
+
+conn.commit()
+print('✅ Essential user interaction schema created successfully')
+print('📋 Additional tables will be created as needed')
 conn.close()
 "
 
@@ -138,76 +163,64 @@ else
     print_warning "No data directory found. You'll need to load LEGO data manually."
 fi
 
-# Setup Ollama inside Docker container
-print_info "Setting up Ollama inside Docker container..."
+# Setup Ollama inside Docker container (optional for faster startup)
+if [ "${SKIP_OLLAMA:-false}" != "true" ]; then
+    print_info "Setting up Ollama inside Docker container..."
 
-# Run the Ollama setup script inside the container
-print_info "Installing Ollama in container..."
-docker-compose exec app bash -c "
-    echo '📥 Installing curl first...'
-    apt-get update && apt-get install -y curl
-    
-    echo '🤖 Installing Ollama...'
-    curl -fsSL https://ollama.com/install.sh | sh
-    
-    echo '🚀 Starting Ollama service...'
-    ollama serve &
-    OLLAMA_PID=\$!
-    
-    echo '⏳ Waiting for Ollama to be ready...'
-    for i in {1..30}; do
-        if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
-            echo '✅ Ollama service is ready'
-            break
+    # Run the Ollama setup script inside the container
+    print_info "Installing Ollama in container..."
+    docker-compose exec app bash -c "
+        echo '📥 Installing curl first...'
+        apt-get update && apt-get install -y curl
+        
+        echo '🤖 Installing Ollama...'
+        curl -fsSL https://ollama.com/install.sh | sh
+        
+        echo '🚀 Starting Ollama service...'
+        ollama serve &
+        OLLAMA_PID=\$!
+        
+        echo '⏳ Waiting for Ollama to be ready...'
+        for i in {1..30}; do
+            if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
+                echo '✅ Ollama service is ready'
+                break
+            fi
+            sleep 2
+        done
+        
+        if [ \$i -eq 30 ]; then
+            echo '❌ Ollama service failed to start'
+            exit 1
         fi
-        sleep 2
-    done
-    
-    if [ \$i -eq 30 ]; then
-        echo '❌ Ollama service failed to start'
-        exit 1
-    fi
-    
-    echo '📦 Downloading Mistral model...'
-    if ollama pull mistral; then
-        echo '✅ Mistral model downloaded successfully'
-    else
-        echo '❌ Failed to download Mistral model'
-        exit 1
-    fi
-    
-    echo '🔍 Verifying model availability...'
-    if ollama list | grep -q mistral; then
-        echo '✅ Mistral model is available and ready to use'
-    else
-        echo '❌ Mistral model verification failed'
-        exit 1
-    fi
-    
-    echo '🎉 Ollama setup complete inside container!'
-    ollama list
-"
+        
+        echo '📦 Downloading Mistral model...'
+        if ollama pull mistral; then
+            echo '✅ Mistral model downloaded successfully'
+        else
+            echo '❌ Failed to download Mistral model'
+            exit 1
+        fi
+        
+        echo '🔍 Verifying model availability...'
+        if ollama list | grep -q mistral; then
+            echo '✅ Mistral model is available and ready to use'
+        else
+            echo '❌ Mistral model verification failed'
+            exit 1
+        fi
+        
+        echo '🎉 Ollama setup complete inside container!'
+        ollama list
+    "
 
-if [ $? -eq 0 ]; then
-    print_status "Ollama setup completed successfully in container"
+    if [ $? -eq 0 ]; then
+        print_status "Ollama setup completed successfully in container"
+    else
+        print_warning "Ollama setup failed - NLP features may not work"
+    fi
 else
-    print_warning "Ollama setup failed - NLP features may not work"
-fi
-
-# Wait for API to be ready
-print_info "Waiting for FastAPI server to be healthy..."
-for i in {1..30}; do
-    if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
-        print_status "FastAPI server is healthy and ready"
-        break
-    fi
-    sleep 3
-    echo -n "."
-done
-
-if [ $i -eq 30 ]; then
-    print_warning "FastAPI server health check timeout - may still be starting"
-    print_info "Check logs with: docker-compose logs app"
+    print_info "Skipping Ollama setup (SKIP_OLLAMA=true). Basic NLP features will work without LLM."
 fi
 
 print_status "Quick setup complete!"

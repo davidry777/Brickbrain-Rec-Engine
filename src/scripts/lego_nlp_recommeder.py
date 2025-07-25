@@ -10,15 +10,44 @@ from datetime import datetime
 # LangChain imports (updated to avoid deprecation warnings)
 from langchain_community.embeddings import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma, FAISS
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 from langchain_openai.chat_models.base import ChatOpenAI
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_community.callbacks.manager import get_openai_callback
-from langchain.output_parsers import PydanticOutputParser
-from langchain.memory import ConversationBufferMemory, ConversationSummaryMemory
-from langchain.schema import HumanMessage, AIMessage
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.messages import HumanMessage, AIMessage
 from pydantic import BaseModel, Field
+
+# Simple conversation memory replacement to avoid deprecated LangChain memory
+class SimpleConversationMemory:
+    """Simple conversation memory that maintains chat history."""
+    
+    def __init__(self, memory_key="chat_history", return_messages=True, input_key="human_input", output_key="ai_response"):
+        self.memory_key = memory_key
+        self.return_messages = return_messages
+        self.input_key = input_key
+        self.output_key = output_key
+        self.chat_history = []
+    
+    def save_context(self, inputs, outputs):
+        """Save context to memory."""
+        human_input = inputs.get(self.input_key, "")
+        ai_response = outputs.get(self.output_key, "")
+        
+        if self.return_messages:
+            self.chat_history.append(HumanMessage(content=human_input))
+            self.chat_history.append(AIMessage(content=ai_response))
+        else:
+            self.chat_history.append({"human": human_input, "ai": ai_response})
+    
+    def load_memory_variables(self, inputs):
+        """Load memory variables."""
+        return {self.memory_key: self.chat_history}
+    
+    def clear(self):
+        """Clear the memory."""
+        self.chat_history = []
 
 # For local embeddings (no API required)
 from sentence_transformers import SentenceTransformer
@@ -79,7 +108,7 @@ class NLPRecommender:
         self.is_initialized = False
 
         # Initialize conversation memory
-        self.conversation_memory = ConversationBufferMemory(
+        self.conversation_memory = SimpleConversationMemory(
             memory_key="chat_history",
             return_messages=True,
             input_key="human_input",
@@ -105,7 +134,7 @@ class NLPRecommender:
                 from langchain_huggingface import HuggingFaceEmbeddings
             except ImportError:
                 # Fallback to old import if new package not available
-                from langchain.embeddings import HuggingFaceEmbeddings
+                from langchain_community.embeddings import HuggingFaceEmbeddings
             
             self.embeddings = HuggingFaceEmbeddings(
                 model_name="sentence-transformers/all-MiniLM-L6-v2",
@@ -121,7 +150,7 @@ class NLPRecommender:
             except ImportError:
                 try:
                     # Fallback to old import if new package not available
-                    from langchain.llms import OllamaLLM
+                    from langchain_community.llms import Ollama as OllamaLLM
                     self.llm = OllamaLLM(model="mistral")  # Use Ollama as LLM
                 except ImportError:
                     logger.warning("Ollama not available, using text-based processing only")
