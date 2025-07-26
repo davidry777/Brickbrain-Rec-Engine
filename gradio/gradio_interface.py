@@ -19,6 +19,7 @@ import gradio as gr
 import requests
 import json
 import pandas as pd
+import re
 from typing import List, Dict, Any, Optional, Tuple
 import time
 from datetime import datetime
@@ -124,7 +125,7 @@ class BrickbrainGradioInterface:
             return history, ""
             
         try:
-            # Convert gradio history to our format
+            # Convert gradio history to our API format
             conversation_history = []
             for human_msg, ai_msg in history:
                 if human_msg:
@@ -170,7 +171,7 @@ class BrickbrainGradioInterface:
                     for q in data['follow_up_questions'][:2]:  # Limit to 2
                         ai_response += f"• {q}\n"
                 
-                # Update history
+                # Update history with standard chat format
                 history.append([message, ai_response])
                 
                 return history, ""
@@ -508,8 +509,7 @@ with gr.Blocks(title="🧱 Brickbrain LEGO Recommender", theme=gr.themes.Soft())
         chatbot = gr.Chatbot(
             label="LEGO Recommendation Chat",
             height=400,
-            placeholder="Start chatting about LEGO sets...",
-            type='messages'
+            placeholder="Start chatting about LEGO sets..."
         )
         
         with gr.Row():
@@ -676,12 +676,15 @@ if __name__ == "__main__":
     print("🔍 Make sure your Docker Compose services are running:")
     print("   docker-compose up -d")
     print("📡 API should be available at http://localhost:8000")
-    print("🌐 Gradio will be available at http://localhost:7860")
+    print("🌐 Gradio will find an available port automatically")
     
+    # Use a more compatible launch configuration
     demo.launch(
-        server_name="0.0.0.0",
-        server_port=7860,
-        share=False,  # Set to True if you want a public link
+        server_name="0.0.0.0",  # Allow external access in Docker container
+        server_port=None,  # Let Gradio find an available port
+        share=True,  # Create a shareable link for Docker container access
         show_error=True,
-        quiet=False
+        debug=False,  # Disable debug mode to avoid schema issues
+        quiet=False,
+        inbrowser=False  # Don't try to open browser in container
     )
