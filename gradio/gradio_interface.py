@@ -25,7 +25,7 @@ from datetime import datetime
 import os
 
 # Configuration
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = os.getenv("BRICKBRAIN_API_URL", "http://localhost:8000")
 DEFAULT_USER_ID = 1
 
 class BrickbrainGradioInterface:
@@ -193,7 +193,7 @@ class BrickbrainGradioInterface:
         try:
             response = self.session.post(
                 f"{self.api_base}/nlp/understand",
-                json=query,
+                json={"query": query},
                 timeout=15
             )
             
@@ -234,39 +234,87 @@ class BrickbrainGradioInterface:
         if not set_query.strip():
             return "Please enter a set name or description!"
             
-        full_query = f"{set_query} {description}".strip()
+        # Check if this looks like a set number (contains hyphens and numbers)
+        import re
+        set_num_pattern = r'^\d+-\d+$'  # Matches patterns like "75192-1"
         
-        try:
-            payload = {
-                "query": full_query,
-                "top_k": 5
-            }
-            
-            response = self.session.post(
-                f"{self.api_base}/sets/similar/semantic",
-                json=payload,
-                timeout=20
-            )
-            
-            if response.status_code == 200:
-                results = response.json()
+        if re.match(set_num_pattern, set_query.strip()):
+            # Use the specific set similarity endpoint
+            try:
+                payload = {
+                    "set_num": set_query.strip(),
+                    "description": description if description.strip() else None,
+                    "top_k": 5
+                }
                 
-                if results:
-                    output = f"## 🔗 Sets Similar to: '{set_query}'\n\n"
-                    for i, result in enumerate(results, 1):
-                        output += f"**{i}. {result['name']} ({result['set_num']})**\n"
-                        output += f"   - {result['theme']} | {result['year']} | {result['num_parts']} pieces\n"
-                        output += f"   - Similarity: {result.get('score', 0):.3f}\n"
-                        output += f"   - *{result.get('description', 'No description available')}*\n\n"
-                    return output
-                else:
-                    return "No similar sets found."
+                response = self.session.post(
+                    f"{self.api_base}/sets/similar/semantic",
+                    json=payload,
+                    timeout=20
+                )
+                
+                if response.status_code == 200:
+                    results = response.json()
                     
-            else:
-                return f"❌ Error: HTTP {response.status_code} - {response.text}"
+                    if results:
+                        output = f"## 🔗 Sets Similar to: '{set_query}'\n\n"
+                        for i, result in enumerate(results, 1):
+                            output += f"**{i}. {result['name']} ({result['set_num']})**\n"
+                            output += f"   - {result['theme']} | {result['year']} | {result['num_parts']} pieces\n"
+                            output += f"   - Similarity: {result.get('score', 0):.3f}\n"
+                            if result.get('description'):
+                                output += f"   - *{result['description']}*\n"
+                            output += "\n"
+                        return output
+                    else:
+                        return "No similar sets found."
+                        
+                else:
+                    return f"❌ Error: HTTP {response.status_code} - {response.text}"
+                    
+            except Exception as e:
+                return f"❌ Error: {str(e)}"
+        else:
+            # Use natural language search for text descriptions
+            full_query = f"Sets similar to {set_query}"
+            if description.strip():
+                full_query += f" {description}"
+            
+            try:
+                payload = {
+                    "query": full_query,
+                    "top_k": 5,
+                    "include_explanation": False
+                }
                 
-        except Exception as e:
-            return f"❌ Error: {str(e)}"
+                response = self.session.post(
+                    f"{self.api_base}/search/natural",
+                    json=payload,
+                    timeout=20
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    results = data.get('results', [])
+                    
+                    if results:
+                        output = f"## 🔗 Sets Similar to: '{set_query}'\n\n"
+                        for i, result in enumerate(results, 1):
+                            output += f"**{i}. {result['name']} ({result['set_num']})**\n"
+                            output += f"   - {result['theme']} | {result['year']} | {result['num_parts']} pieces\n"
+                            output += f"   - Relevance: {result.get('relevance_score', 0):.3f}\n"
+                            if result.get('match_reasons'):
+                                output += f"   - Why: {', '.join(result['match_reasons'])}\n"
+                            output += "\n"
+                        return output
+                    else:
+                        return "No similar sets found."
+                        
+                else:
+                    return f"❌ Error: HTTP {response.status_code} - {response.text}"
+                    
+            except Exception as e:
+                return f"❌ Error: {str(e)}"
 
     def get_user_recommendations(self, algorithm: str = "hybrid", top_k: int = 5) -> str:
         """Get personalized recommendations for the current user"""

@@ -60,7 +60,8 @@ def test_query_understanding():
     """Test query understanding endpoint"""
     print("\n🧠 Testing query understanding...")
     try:
-        response = requests.post(f"{API_BASE}/nlp/understand", json="birthday gift for 8 year old", timeout=15)
+        payload = {"query": "birthday gift for 8 year old"}
+        response = requests.post(f"{API_BASE}/nlp/understand", json=payload, timeout=15)
         if response.status_code == 200:
             data = response.json()
             print(f"✅ Query understanding works")
@@ -100,13 +101,16 @@ def test_semantic_similarity():
     """Test semantic similarity search"""
     print("\n🔗 Testing semantic similarity...")
     try:
+        # Test using natural language search for text-based similarity
         payload = {
-            "query": "large detailed castle",
-            "top_k": 3
+            "query": "sets similar to large detailed castle",
+            "top_k": 3,
+            "include_explanation": False
         }
-        response = requests.post(f"{API_BASE}/sets/similar/semantic", json=payload, timeout=20)
+        response = requests.post(f"{API_BASE}/search/natural", json=payload, timeout=20)
         if response.status_code == 200:
-            results = response.json()
+            data = response.json()
+            results = data.get('results', [])
             print(f"✅ Semantic similarity works ({len(results)} results)")
             if results:
                 print(f"   Sample result: {results[0]['name']} ({results[0]['set_num']})")
