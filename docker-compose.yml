@@ -93,9 +93,47 @@ services:
         reservations:
           memory: 2G
 
+  gradio:
+    image: continuumio/miniconda3:latest
+    container_name: brickbrain-gradio
+    working_dir: /app
+    volumes:
+      - .:/app
+      - conda_envs:/opt/conda/envs
+    ports:
+      - "7860:7860"
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      - PYTHONPATH=${PYTHONPATH:-/app}
+      - BRICKBRAIN_API_URL=http://app:8000
+    command: |
+      bash -c "
+        echo '🧱 Setting up Gradio interface...' &&
+        if ! conda env list | grep -q brickbrain-gradio; then
+          echo '📦 Creating Gradio environment...'
+          conda create -n brickbrain-gradio python=3.11 -y
+        fi &&
+        echo '📦 Installing Gradio dependencies...' &&
+        conda run -n brickbrain-gradio pip install gradio>=4.0.0 requests &&
+        echo '🌐 Starting Gradio interface...' &&
+        echo 'Gradio will be available at http://localhost:7860' &&
+        cd /app &&
+        exec conda run -n brickbrain-gradio python gradio/gradio_interface.py
+      "
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:7860 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
 volumes:
   postgres_data:
   conda_envs:
+    external: true
   model_cache:
   embeddings_data:
   ollama_models:

@@ -43,6 +43,10 @@ print_status "Docker is running"
 print_info "Stopping existing containers..."
 docker-compose down --remove-orphans 2>/dev/null || true
 
+# Create required volumes
+print_info "Creating required Docker volumes..."
+docker volume create conda_envs 2>/dev/null || print_info "Volume conda_envs already exists"
+
 print_info "Starting PostgreSQL database..."
 docker-compose up -d postgres
 
@@ -85,6 +89,30 @@ if [ $i -eq 60 ]; then
     print_error "App container failed to become healthy within 5 minutes"
     print_info "Check logs with: docker-compose logs app"
     exit 1
+fi
+
+# Start Gradio interface container
+print_info "Starting Gradio interface container..."
+docker-compose up -d gradio
+
+# Wait for Gradio container to be healthy
+print_info "Waiting for Gradio interface to be ready..."
+for i in {1..30}; do
+    gradio_health=$(docker inspect --format='{{.State.Health.Status}}' brickbrain-gradio 2>/dev/null || echo "starting")
+    if [ "$gradio_health" = "healthy" ]; then
+        print_status "Gradio interface is ready at http://localhost:7860"
+        break
+    elif [ "$gradio_health" = "unhealthy" ]; then
+        print_warning "Gradio container health check failed, but it may still be starting up"
+        break
+    fi
+    sleep 10
+    echo -n "."
+done
+
+if [ $i -eq 30 ]; then
+    print_warning "Gradio container didn't become healthy within 5 minutes, but may still be starting"
+    print_info "Check status with: docker-compose logs gradio"
 fi
 
 # Verify NLP packages are installed in container
@@ -231,6 +259,7 @@ echo -e "\n${GREEN}🚀 Services Running:${NC}"
 echo "• PostgreSQL Database: localhost:5432"
 echo "• FastAPI Server: http://localhost:8000"
 echo "• API Documentation: http://localhost:8000/docs"
+echo "• Gradio Interface: http://localhost:7860"
 echo "• Ollama Service: http://localhost:11434"
 echo "• Application Container: ready"
 
@@ -242,9 +271,12 @@ echo "• Natural Language Search: POST /nlp/search"
 
 echo -e "\n${GREEN}🔧 Quick Commands:${NC}"
 echo "• Test NLP: python -m tests.unit.test_nlp_recommender"
+echo "• Test Gradio Setup: python -m tests.unit.test_gradio_setup"
 echo "• Validate Setup: python -m tests.integration.validate_nlp_setup"
 echo "• API Docs: http://localhost:8000/docs"
+echo "• Gradio Interface: http://localhost:7860"
 echo "• View logs: docker-compose logs app"
+echo "• View Gradio logs: docker-compose logs gradio"
 echo "• Stop services: docker-compose down"
 echo "• Check Ollama: ollama list"
 

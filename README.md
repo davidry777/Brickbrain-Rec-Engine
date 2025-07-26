@@ -28,6 +28,14 @@ A production-ready, sophisticated recommendation system that helps LEGO enthusia
 - **🌍 Multi-language Support**: Internationalization for global deployment
 - **📱 Mobile Optimization**: Responsive design and mobile-first API endpoints
 
+### 🎨 Interactive Web Interface
+- **🌐 Gradio Interface**: Beautiful, interactive web UI for all features
+- **💬 Conversational Chat**: Natural language chat interface with AI memory
+- **🔍 Real-time Search**: Live search with instant results and explanations
+- **📊 Visual Analytics**: Rich visualizations and recommendation explanations
+- **👤 User Dashboard**: Profile management and preference customization
+- **🔧 System Monitoring**: Real-time health checks and performance metrics
+
 ### 🛠️ Advanced Technical Features
 - **🏗️ Microservices Architecture**: Modular, scalable service design
 - **📊 Real-time Analytics**: Live dashboard with performance metrics
@@ -55,12 +63,19 @@ scripts/
 ├── run_all_tests.sh                   # Comprehensive testing script
 ├── setup_ollama.sh                    # Ollama LLM setup
 ├── setup_ollama_models.sh             # Ollama model installation
-└── nl_quick_reference.sh              # NL feature quick reference
+├── nl_quick_reference.sh              # NL feature quick reference
+└── launch_gradio.sh                   # Gradio interface launcher
+gradio/                                # Interactive web interface
+├── gradio_interface.py                # Full-featured Gradio interface
+├── gradio_launcher.py                 # Simple demo launcher
+├── GRADIO_README.md                   # Gradio documentation
+└── README.md                          # Quick start guide
 tests/
 ├── unit/                              # Component-level tests
 │   ├── test_database.py
 │   ├── test_nlp_recommender.py
-│   └── test_recommendations.py
+│   ├── test_recommendations.py
+│   └── test_gradio_setup.py           # Gradio API tests
 ├── integration/                       # End-to-end API tests including NL
 │   ├── nl_integration_test.py
 │   ├── final_validation.py
@@ -136,6 +151,42 @@ docker-compose up -d app
 ./scripts/run_all_tests.sh --integration
 ./scripts/run_all_tests.sh --performance
 ```
+
+## 🌐 Interactive Web Interface
+
+### Launch Gradio Interface
+```bash
+# Option 1: Simple launcher (if you have Python locally)
+pip install gradio requests
+python3 gradio/gradio_launcher.py
+
+# Option 2: Full-featured interface
+./scripts/launch_gradio.sh
+
+# Option 3: As Docker service (included in main compose)
+docker-compose up -d
+```
+
+**Access Points:**
+- **Gradio Interface**: http://localhost:7860
+- **API Documentation**: http://localhost:8000/docs
+- **System Health**: http://localhost:8000/health
+
+### Interface Features
+- 🔍 **Natural Language Search**: "Star Wars sets for adults"
+- 💬 **Conversational AI**: Chat about LEGO recommendations
+- 🧠 **Query Understanding**: See how AI interprets your requests
+- 🔗 **Similarity Search**: Find sets similar to any LEGO set
+- 👤 **User Profiles**: Create personalized recommendation profiles
+- 🔧 **System Monitoring**: Real-time health and performance checks
+
+### Testing the Interface
+```bash
+# Test API connectivity before launching Gradio
+python3 tests/unit/test_gradio_setup.py
+```
+
+For detailed Gradio setup instructions, see [gradio/GRADIO_README.md](gradio/GRADIO_README.md).
 
 ## 📋 API Endpoints
 
