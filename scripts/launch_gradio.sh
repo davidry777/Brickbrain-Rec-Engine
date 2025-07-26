@@ -78,14 +78,18 @@ else
     fi
 fi
 
-# Check if gradio is installed in the environment
-print_status "Checking Gradio installation..."
-if docker-compose exec -T app conda run -n brickbrain-rec python -c "import gradio" 2>/dev/null; then
-    print_success "Gradio is already installed"
+# Ensure the dedicated Gradio service is ready
+print_status "Preparing Gradio service..."
+if docker-compose ps gradio | grep -q "Up"; then
+    print_success "Gradio service is already running"
 else
-    print_warning "Installing Gradio in the container..."
-    docker-compose exec app conda run -n brickbrain-rec pip install gradio>=4.0.0
-    print_success "Gradio installed successfully"
+    print_status "Starting Gradio service..."
+    if ! docker-compose up -d gradio; then
+        print_error "Failed to start Gradio service"
+        print_status "Check logs with: docker-compose logs gradio"
+        exit 1
+    fi
+    print_success "Gradio service started successfully"
 fi
 
 # Launch the Gradio interface
@@ -101,5 +105,5 @@ echo "🔍 To stop the interface, press Ctrl+C"
 echo "🔧 To stop all services: docker-compose down"
 echo ""
 
-# Run the gradio interface in the container
-docker-compose exec app conda run -n brickbrain-rec python /app/gradio/gradio_interface.py
+# Run the gradio interface using the dedicated Gradio service
+docker-compose up gradio

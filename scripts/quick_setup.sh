@@ -93,7 +93,11 @@ fi
 
 # Start Gradio interface container
 print_info "Starting Gradio interface container..."
-docker-compose up -d gradio
+if ! docker-compose up -d gradio; then
+    print_error "Failed to start Gradio interface container"
+    print_info "Check logs with: docker-compose logs gradio"
+    exit 1
+fi
 
 # Wait for Gradio container to be healthy
 print_info "Waiting for Gradio interface to be ready..."

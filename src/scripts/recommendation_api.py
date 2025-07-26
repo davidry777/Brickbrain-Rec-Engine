@@ -32,6 +32,7 @@ DB_PARAMS = {
 # Global recommendation engine instance
 recommendation_engine: Optional[HybridRecommender] = None
 nl_recommender: Optional[NLPRecommender] = None
+start_time = datetime.utcnow()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -803,19 +804,59 @@ async def get_api_metrics():
 @app.get("/health")
 async def health_check(db: psycopg2.extensions.connection = Depends(get_db)):
     """
-    Health check endpoint
+    Health check endpoint with detailed system status
     """
     try:
-        cursor = db.cursor()
-        cursor.execute("SELECT 1")
-        cursor.fetchone()
+        # Check database connection
+        database_status = "disconnected"
+        try:
+            cursor = db.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            database_status = "connected"
+        except Exception as db_e:
+            logger.warning(f"Database check failed: {db_e}")
+        
+        # Check NLP system status
+        nlp_status = "not_ready"
+        if nl_recommender:
+            try:
+                # Test if NLP recommender can process a basic query
+                test_result = nl_recommender.process_nl_query("test", None)
+                if test_result:
+                    nlp_status = "ready"
+            except Exception as nlp_e:
+                logger.warning(f"NLP system check failed: {nlp_e}")
+        
+        # Check vector database status
+        vectordb_status = "not_ready"
+        if nl_recommender and hasattr(nl_recommender, 'vectorstore') and nl_recommender.vectorstore:
+            try:
+                # Test if vector store is accessible
+                vectordb_status = "ready"
+            except Exception as vec_e:
+                logger.warning(f"Vector DB check failed: {vec_e}")
+        
+        # Check if embeddings exist
+        embeddings_exist = os.path.exists("./embeddings/faiss_index")
+        if not embeddings_exist and vectordb_status == "not_ready":
+            vectordb_status = "not_initialized"
+        
+        # Determine overall system status
+        overall_status = "healthy" if database_status == "connected" else "degraded"
         
         return {
-            "status": "healthy",
+            "status": overall_status,
             "timestamp": datetime.utcnow().isoformat(),
-            "recommendation_engine": "active" if recommendation_engine else "inactive"
+            "recommendation_engine": "active" if recommendation_engine else "inactive",
+            "database_status": database_status,
+            "nlp_status": nlp_status,
+            "vectordb_status": vectordb_status,
+            "embeddings_exist": embeddings_exist,
+            "uptime": f"{(datetime.utcnow() - start_time).total_seconds():.0f}s"
         }
     except Exception as e:
+        logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail=f"Health check failed: {e}")
     
 # Natural Language Search Endpoint
