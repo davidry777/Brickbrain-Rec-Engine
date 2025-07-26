@@ -29,12 +29,14 @@ A production-ready, sophisticated recommendation system that helps LEGO enthusia
 - **📱 Mobile Optimization**: Responsive design and mobile-first API endpoints
 
 ### 🎨 Interactive Web Interface
-- **🌐 Gradio Interface**: Beautiful, interactive web UI for all features
-- **💬 Conversational Chat**: Natural language chat interface with AI memory
-- **🔍 Real-time Search**: Live search with instant results and explanations
-- **📊 Visual Analytics**: Rich visualizations and recommendation explanations
-- **👤 User Dashboard**: Profile management and preference customization
-- **🔧 System Monitoring**: Real-time health checks and performance metrics
+- **🌐 Production Gradio Interface**: Beautiful, full-featured web UI showcasing all system capabilities
+- **💬 Conversational AI Chat**: Multi-turn dialogue with conversation memory and context awareness
+- **🔍 Live Natural Language Search**: Real-time search with semantic understanding and explanations
+- **🧠 Query Understanding Demo**: Interactive demonstration of AI query interpretation and intent detection
+- **🔗 Semantic Similarity Explorer**: Find and explore similar LEGO sets using vector search
+- **� System Health Dashboard**: Real-time monitoring of database, NLP system, and vector database status
+- **👤 User Profile Management**: Create and manage personalized recommendation profiles
+- **🎯 Interactive Demonstrations**: Hands-on experience with all recommendation algorithms
 
 ### 🛠️ Advanced Technical Features
 - **🏗️ Microservices Architecture**: Modular, scalable service design
@@ -115,7 +117,7 @@ logs/                                  # Application logs
 
 ### Recommended Setup (Docker Compose)
 ```bash
-# One command to set up everything and start the system
+# One command to set up everything and start the complete system
 ./scripts/quick_setup.sh
 
 # This script:
@@ -124,6 +126,13 @@ logs/                                  # Application logs
 # - Installs natural language processing features
 # - Loads LEGO data and generates embeddings
 # - Starts the API server on http://localhost:8000
+# - Launches Gradio interface on http://localhost:7860
+
+# Alternative: Use the Gradio launcher script
+./scripts/launch_gradio.sh
+# - Checks system health and starts services if needed
+# - Ensures all dependencies are running
+# - Launches the interactive Gradio interface
 ```
 
 ### Manual Setup (Step by Step)
@@ -135,11 +144,14 @@ docker-compose up -d postgres
 ./scripts/setup_ollama.sh
 ./scripts/setup_ollama_models.sh
 
-# 3. Start the application
-docker-compose up -d app
+# 3. Start the application services
+docker-compose up -d app gradio
 
-# Access the API at http://localhost:8000
-# View API documentation at http://localhost:8000/docs
+# Access points:
+# - API: http://localhost:8000
+# - API Documentation: http://localhost:8000/docs  
+# - Gradio Interface: http://localhost:7860
+# - Database: localhost:5432
 ```
 
 ### Test the Setup
@@ -156,37 +168,83 @@ docker-compose up -d app
 
 ### Launch Gradio Interface
 ```bash
-# Option 1: Simple launcher (if you have Python locally)
-pip install gradio requests
-python3 gradio/gradio_launcher.py
-
-# Option 2: Full-featured interface
+# Recommended: Launch with Docker Compose (includes all services)
 ./scripts/launch_gradio.sh
 
-# Option 3: As Docker service (included in main compose)
+# Alternative: Manual Docker Compose
 docker-compose up -d
+# The Gradio interface starts automatically as part of the full system
+
+# Development: Local Python (requires API running)
+pip install gradio requests pandas
+python3 gradio/gradio_interface.py
 ```
 
 **Access Points:**
-- **Gradio Interface**: http://localhost:7860
-- **API Documentation**: http://localhost:8000/docs
-- **System Health**: http://localhost:8000/health
+- **🌐 Gradio Interface**: http://localhost:7860 - Full interactive demo
+- **📚 API Documentation**: http://localhost:8000/docs - OpenAPI/Swagger docs
+- **🔧 System Health**: http://localhost:8000/health - Detailed system status
 
-### Interface Features
-- 🔍 **Natural Language Search**: "Star Wars sets for adults"
-- 💬 **Conversational AI**: Chat about LEGO recommendations
-- 🧠 **Query Understanding**: See how AI interprets your requests
-- 🔗 **Similarity Search**: Find sets similar to any LEGO set
-- 👤 **User Profiles**: Create personalized recommendation profiles
-- 🔧 **System Monitoring**: Real-time health and performance checks
+### Interface Features & Capabilities
+
+#### 🔍 **System Health Monitoring**
+- **Real-time Status Dashboard**: Monitor database, NLP system, and vector database health
+- **Component Status Indicators**: Visual indicators for each system component
+- **Uptime Tracking**: System availability and performance metrics
+- **Service Dependencies**: Check API connectivity and service readiness
+
+#### 🧠 **Natural Language Processing Demo**
+- **Query Understanding**: See how AI interprets your natural language requests
+- **Intent Detection**: Demonstrates gift recommendations, similar sets, collection advice
+- **Entity Extraction**: Shows recognition of recipients, occasions, themes, price ranges
+- **Semantic Analysis**: Understand how the system processes complex queries
+
+#### 💬 **Conversational AI Experience**
+- **Multi-turn Conversations**: Context-aware dialogue with memory persistence
+- **Follow-up Handling**: Understands references like "show me similar" or "something smaller"
+- **Preference Learning**: AI learns from your conversation history and feedback
+- **Natural Interaction**: Chat naturally about LEGO recommendations
+
+#### 🔗 **Semantic Similarity Search**
+- **Vector-based Discovery**: Find sets similar to any LEGO set using AI embeddings
+- **Description Matching**: Search using detailed descriptions and find semantically similar sets
+- **Confidence Scoring**: See how confident the AI is in each recommendation
+- **Interactive Exploration**: Browse and discover sets through semantic relationships
+
+#### 🎯 **Personalized Recommendations**
+- **User Profile Creation**: Build detailed user profiles with preferences and history
+- **Algorithm Comparison**: Experience different recommendation approaches
+- **Interactive Feedback**: Rate recommendations to improve future suggestions
+- **Preference Customization**: Fine-tune interests, budget, and building experience
+
+### Quick Demo Examples
+Try these queries in the Gradio interface:
+
+**Natural Language Search:**
+- "Star Wars sets for adults with lots of detail"
+- "Medieval castle with minifigures under $200"
+- "Technic sets for advanced builders"
+
+**Conversational AI:**
+- "I'm looking for a gift for my 10-year-old nephew who loves space"
+- "Show me something similar to the Hogwarts Castle but smaller"
+- "What would you recommend for someone just getting back into LEGO?"
+
+**System Monitoring:**
+- Check real-time system health and component status
+- Monitor API response times and system performance
+- View embedding database status and NLP system readiness
 
 ### Testing the Interface
 ```bash
-# Test API connectivity before launching Gradio
+# Validate Gradio setup and API connectivity
 python3 tests/unit/test_gradio_setup.py
+
+# Test all interface features end-to-end
+python3 tests/integration/nl_integration_test.py --gradio
 ```
 
-For detailed Gradio setup instructions, see [gradio/GRADIO_README.md](gradio/GRADIO_README.md).
+For detailed Gradio setup instructions and troubleshooting, see [gradio/GRADIO_README.md](gradio/GRADIO_README.md).
 
 ## 📋 API Endpoints
 
@@ -213,7 +271,7 @@ For detailed Gradio setup instructions, see [gradio/GRADIO_README.md](gradio/GRA
 - `GET /themes` - List all available LEGO themes
 
 ### 🔧 System & Monitoring
-- `GET /health` - API health check
+- `GET /health` - **Enhanced API health check** with detailed component status (database, NLP, vector DB)
 - `GET /metrics` - Basic system metrics and performance data
 
 ## 🧪 Testing
@@ -410,38 +468,47 @@ The system includes comprehensive test coverage across core components:
 The system uses a containerized architecture for easy deployment:
 
 ```yaml
+```
 services:
   postgres:        # PostgreSQL database with persistent storage
   app:             # Main FastAPI application with ML models
+  gradio:          # Interactive Gradio web interface
+```
 ```
 
 ### Container Features
-- **Health Checks**: Automated PostgreSQL health monitoring
+- **Health Checks**: Automated health monitoring for PostgreSQL, API, and Gradio services
 - **Persistent Volumes**: Data persistence for database, models, and embeddings
 - **Environment Configuration**: Configurable database and API settings
 - **Model Caching**: Persistent storage for ML models and embeddings
 - **Conda Environment**: Python dependencies managed via conda
+- **Service Dependencies**: Automatic service startup order and dependency management
 
 ## 🚀 Deployment Options
 
 ### Development (Docker Compose)
 ```bash
-# Quick development setup
+# Quick development setup with full interface
 ./scripts/quick_setup.sh
 
+# Alternative: Use Gradio launcher
+./scripts/launch_gradio.sh
+
 # Access services:
-# API: http://localhost:8000
-# API Documentation: http://localhost:8000/docs
-# Database: localhost:5432
+# - Gradio Interface: http://localhost:7860
+# - API: http://localhost:8000
+# - API Documentation: http://localhost:8000/docs
+# - Database: localhost:5432
 ```
 
 ### Production Considerations
-The current implementation provides a solid foundation that can be extended for production:
+The current implementation provides a comprehensive foundation that can be extended for production:
 
-- **Database**: PostgreSQL container with persistent storage
-- **API**: FastAPI application with ML models
+- **Database**: PostgreSQL container with persistent storage and health monitoring
+- **API**: FastAPI application with ML models and comprehensive health checks
+- **Web Interface**: Production-ready Gradio interface with system monitoring
 - **Scaling**: Can be extended with load balancers and container orchestration
-- **Monitoring**: Basic health checks and metrics endpoint available
+- **Monitoring**: Enhanced health checks, metrics endpoint, and component status tracking
 
 ## 📝 Configuration
 
@@ -632,6 +699,7 @@ CACHE_CONFIG = {
 - ✅ **Semantic Search**: FAISS vector database with sentence-transformers embeddings
 - ✅ **Database Integration**: PostgreSQL with complete LEGO dataset (25,216+ sets)
 - ✅ **API Framework**: FastAPI with automatic OpenAPI documentation
+- ✅ **Interactive Web Interface**: Production-ready Gradio interface with comprehensive demos
 
 ### Implemented Features
 - ✅ **Multi-Algorithm Recommendations**: Content-based, collaborative filtering, and hybrid approaches
@@ -640,6 +708,8 @@ CACHE_CONFIG = {
 - ✅ **Advanced Search**: Multi-criteria filtering (theme, pieces, age, complexity)
 - ✅ **Conversational AI**: Context-aware recommendations with follow-up understanding
 - ✅ **Vector Search**: Semantic similarity using FAISS and sentence transformers
+- ✅ **Interactive Web Interface**: Full-featured Gradio interface with system monitoring
+- ✅ **Enhanced Health Monitoring**: Detailed component status tracking (database, NLP, vector DB)
 
 ### Production Ready Components
 - ✅ **Performance**: Fast response times with efficient database queries
@@ -647,6 +717,8 @@ CACHE_CONFIG = {
 - ✅ **Testing**: Unit tests, integration tests, and production readiness validation
 - ✅ **Documentation**: Complete API documentation and setup guides
 - ✅ **Containerization**: Docker Compose setup with health checks
+- ✅ **User Experience**: Intuitive web interface with real-time system monitoring
+- ✅ **System Observability**: Enhanced health endpoints with detailed component status
 
 ### Future Enhancements (Not Yet Implemented)
 - 🚧 **Advanced Analytics**: Real-time dashboards and A/B testing
@@ -791,7 +863,20 @@ curl -X POST "http://localhost:8000/recommendations" \
 ./scripts/setup_ollama_models.sh
 ```
 
-### 4. `scripts/nl_quick_reference.sh` - Natural Language Features
+### 5. `scripts/launch_gradio.sh` - Interactive Web Interface
+```bash
+# Launch the complete Gradio interface
+./scripts/launch_gradio.sh
+
+# This script handles:
+# - Checking Docker and service health
+# - Starting all required services (API, database)
+# - Ensuring system components are ready
+# - Launching the interactive Gradio interface
+# - Providing access URLs and usage instructions
+```
+
+### 6. `scripts/nl_quick_reference.sh` - Natural Language Features
 ```bash
 # Quick reference for NL features and capabilities
 ./scripts/nl_quick_reference.sh
