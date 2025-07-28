@@ -59,6 +59,72 @@ class BrickbrainGradioInterface:
             details = f"Connection failed: {str(e)}"
         
         return status, details
+    
+    def get_theme_ids_by_names(self, theme_names: List[str]) -> List[int]:
+        """Get theme IDs from theme names"""
+        try:
+            response = self.session.get(f"{self.api_base}/themes", timeout=10)
+            if response.status_code == 200:
+                themes_data = response.json()
+                theme_map = {theme['name'].lower(): theme['id'] for theme in themes_data}
+                
+                theme_ids = []
+                for name in theme_names:
+                    # Try exact match first, then partial match
+                    name_lower = name.lower()
+                    if name_lower in theme_map:
+                        theme_ids.append(theme_map[name_lower])
+                    else:
+                        # Try partial match
+                        for theme_name, theme_id in theme_map.items():
+                            if name_lower in theme_name or theme_name in name_lower:
+                                theme_ids.append(theme_id)
+                                break
+                
+                return theme_ids
+            else:
+                return []
+        except Exception as e:
+            print(f"Warning: Failed to get theme IDs: {e}")
+            return []
+    
+    def lookup_user(self, username_or_email: str) -> str:
+        """Look up an existing user by username or email"""
+        if not username_or_email.strip():
+            return "Please enter a username or email!"
+            
+        try:
+            # Try to get user profile by ID first (in case they enter a user ID)
+            if username_or_email.isdigit():
+                user_id = int(username_or_email)
+                response = self.session.get(f"{self.api_base}/users/{user_id}/profile", timeout=10)
+                if response.status_code == 200:
+                    user_data = response.json()
+                    self.current_user_id = user_id
+                    return f"""✅ **User Found and Activated!**
+
+**User ID**: {user_id}
+**Username**: {user_data.get('username', 'Unknown')}
+**Total Ratings**: {user_data.get('total_ratings', 0)}
+**Average Rating**: {user_data.get('avg_rating', 0):.2f}
+**Complexity Preference**: {user_data.get('complexity_preference', 'Unknown')}
+**Preferred Themes**: {user_data.get('preferred_themes', [])}
+
+This user is now active for personalized recommendations."""
+            
+            # If not a user ID, we'd need a search endpoint (not currently available)
+            return f"""❌ **User Lookup Not Available**
+
+Currently, the API doesn't have a user search endpoint. 
+You can:
+1. Enter a **User ID** (number) if you know it
+2. Create a new user profile
+3. Use the default user ID: {self.current_user_id}
+
+To activate an existing user, enter their User ID in this field."""
+            
+        except Exception as e:
+            return f"❌ Error looking up user: {str(e)}"
 
     def natural_language_search(self, query: str, top_k: int = 5, include_explanation: bool = True) -> Tuple[str, str]:
         """Perform natural language search"""
@@ -341,10 +407,10 @@ class BrickbrainGradioInterface:
                     
                     for i, result in enumerate(results, 1):
                         output += f"**{i}. {result['name']} ({result['set_num']})**\n"
-                        output += f"   - {result['theme']} | {result['year']} | {result['num_parts']} pieces\n"
+                        output += f"   - {result.get('theme_name', 'Unknown Theme')} | {result['year']} | {result['num_parts']} pieces\n"
                         output += f"   - Score: {result.get('score', 0):.3f}\n"
-                        if result.get('reasoning'):
-                            output += f"   - Why: {result['reasoning']}\n"
+                        if result.get('reasons'):
+                            output += f"   - Why: {', '.join(result['reasons'])}\n"
                         output += "\n"
                     return output
                 else:
@@ -356,17 +422,25 @@ class BrickbrainGradioInterface:
         except Exception as e:
             return f"❌ Error: {str(e)}"
 
-    def create_user_profile(self, user_name: str, age: int, favorite_themes: str, experience_level: str) -> str:
+    def create_user_profile(self, user_name: str, username: str, email: str, age: int, favorite_themes: str, experience_level: str) -> str:
         """Create or update user profile"""
         if not user_name.strip():
             return "Please enter a user name!"
+        
+        if not username.strip():
+            username = user_name.lower().replace(' ', '_')
+        
+        if not email.strip():
+            email = f"{username}@example.com"
             
         try:
-            # Create user
+            # Create user with proper API schema
+            password = f"demo_password_{username}"  # Demo password for testing
+            
             user_payload = {
-                "name": user_name,
-                "email": f"{user_name.lower().replace(' ', '_')}@example.com",
-                "age": age
+                "username": username,
+                "email": email,
+                "password": password
             }
             
             response = self.session.post(
@@ -379,12 +453,28 @@ class BrickbrainGradioInterface:
                 user_data = response.json()
                 new_user_id = user_data.get('user_id')
                 
-                # Update preferences
+                # Update preferences including age
                 themes_list = [theme.strip() for theme in favorite_themes.split(',') if theme.strip()]
+                theme_ids = self.get_theme_ids_by_names(themes_list) if themes_list else []
+                
+                # Convert experience level to complexity preference
+                complexity_map = {
+                    "beginner": "simple",
+                    "intermediate": "moderate", 
+                    "advanced": "complex"
+                }
+                complexity = complexity_map.get(experience_level.lower(), "moderate")
+                
                 prefs_payload = {
-                    "favorite_themes": themes_list,
-                    "experience_level": experience_level,
-                    "age_group": "child" if age < 13 else "teen" if age < 18 else "adult"
+                    "user_id": new_user_id,
+                    "preferred_themes": theme_ids,
+                    "preferred_min_pieces": 50 if age < 13 else 100,
+                    "preferred_max_pieces": 1000 if age < 13 else 3000,
+                    "preferred_min_year": 2000,
+                    "preferred_max_year": 2024,
+                    "complexity_preference": complexity,
+                    "budget_range_min": 0.0,
+                    "budget_range_max": 200.0 if age < 18 else 500.0
                 }
                 
                 prefs_response = self.session.put(
@@ -398,12 +488,15 @@ class BrickbrainGradioInterface:
                 return f"""✅ **User Profile Created Successfully!**
 
 **User ID**: {new_user_id}
-**Name**: {user_name}
+**Username**: {username}
+**Email**: {email}
 **Age**: {age}
-**Experience**: {experience_level}
+**Experience**: {experience_level} (complexity: {complexity})
 **Favorite Themes**: {', '.join(themes_list) if themes_list else 'None specified'}
+**Theme IDs**: {theme_ids if theme_ids else 'None mapped'}
 
-This user ID ({new_user_id}) is now active for personalized recommendations."""
+This user ID ({new_user_id}) is now active for personalized recommendations.
+Note: Demo password is '{password}' (for testing purposes only)."""
                 
             else:
                 return f"❌ Error creating user: HTTP {response.status_code} - {response.text}"
@@ -613,7 +706,9 @@ with gr.Blocks(title="🧱 Brickbrain LEGO Recommender", theme=gr.themes.Soft())
         with gr.Row():
             with gr.Column():
                 gr.Markdown("#### Create User Profile")
-                user_name = gr.Textbox(label="Name", placeholder="Enter user name")
+                user_name = gr.Textbox(label="Name", placeholder="Enter full name")
+                user_username = gr.Textbox(label="Username", placeholder="Enter username (optional - will auto-generate if empty)")
+                user_email = gr.Textbox(label="Email", placeholder="Enter email (optional - will auto-generate if empty)")
                 user_age = gr.Slider(minimum=1, maximum=100, value=25, label="Age")
                 user_themes = gr.Textbox(
                     label="Favorite Themes (comma-separated)", 
@@ -626,6 +721,14 @@ with gr.Blocks(title="🧱 Brickbrain LEGO Recommender", theme=gr.themes.Soft())
                 )
                 create_profile_btn = gr.Button("👤 Create Profile", variant="primary")
                 
+                gr.Markdown("---")
+                gr.Markdown("#### Sign In to Existing Profile")
+                lookup_input = gr.Textbox(
+                    label="User ID or Username", 
+                    placeholder="Enter User ID (number) to activate existing profile"
+                )
+                lookup_btn = gr.Button("🔍 Find & Activate User", variant="secondary")
+                
             with gr.Column():
                 gr.Markdown("#### Get Personalized Recommendations")
                 rec_algorithm = gr.Dropdown(
@@ -637,12 +740,18 @@ with gr.Blocks(title="🧱 Brickbrain LEGO Recommender", theme=gr.themes.Soft())
                 get_recs_btn = gr.Button("🎯 Get Recommendations", variant="primary")
         
         with gr.Row():
-            profile_output = gr.Markdown(label="Profile Creation Result")
+            profile_output = gr.Markdown(label="Profile Creation & Lookup Result")
             recommendations_output = gr.Markdown(label="Personalized Recommendations")
         
         create_profile_btn.click(
             fn=interface.create_user_profile,
-            inputs=[user_name, user_age, user_themes, user_experience],
+            inputs=[user_name, user_username, user_email, user_age, user_themes, user_experience],
+            outputs=profile_output
+        )
+        
+        lookup_btn.click(
+            fn=interface.lookup_user,
+            inputs=lookup_input,
             outputs=profile_output
         )
         
