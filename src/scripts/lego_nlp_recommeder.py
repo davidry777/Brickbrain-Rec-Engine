@@ -150,12 +150,12 @@ class NLPRecommender:
             
             try:
                 from langchain_ollama import OllamaLLM
-                self.llm = OllamaLLM(model="mistral")  # Use Ollama as LLM
+                self.llm = OllamaLLM(model="mistral", base_url="http://localhost:11434")  # Use Ollama as LLM
             except ImportError:
                 try:
                     # Fallback to old import if new package not available
                     from langchain_community.llms import Ollama as OllamaLLM
-                    self.llm = OllamaLLM(model="mistral")  # Use Ollama as LLM
+                    self.llm = OllamaLLM(model="mistral", base_url="http://localhost:11434")  # Use Ollama as LLM
                 except ImportError:
                     logger.warning("Ollama not available, using text-based processing only")
                     self.llm = None

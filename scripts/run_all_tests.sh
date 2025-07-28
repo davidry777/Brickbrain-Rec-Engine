@@ -291,20 +291,30 @@ if [ "$RUN_INTEGRATION" = true ]; then
     
     cd tests/integration
     
+    # For integration tests, always use Docker environment regardless of local setup
+    if docker-compose ps app | grep -q "Up"; then
+        INTEGRATION_PYTHON_CMD="docker-compose exec app conda run -n brickbrain-rec python"
+    elif docker exec brickbrain-app true 2>/dev/null; then
+        INTEGRATION_PYTHON_CMD="docker exec brickbrain-app /opt/conda/envs/brickbrain-rec/bin/python"
+    else
+        print_warning "Docker container not available - integration tests require Docker environment"
+        INTEGRATION_PYTHON_CMD="$PYTHON_CMD"
+    fi
+    
     if [ -f "production_test_simple.py" ]; then
-        run_test "Simple Production Test" "$PYTHON_CMD production_test_simple.py" "Integration Test"
+        run_test "Simple Production Test" "$INTEGRATION_PYTHON_CMD tests/integration/production_test_simple.py" "Integration Test"
     fi
     
     if [ -f "final_validation.py" ]; then
-        run_test "Final Validation" "$PYTHON_CMD final_validation.py" "Integration Test"
+        run_test "Final Validation" "$INTEGRATION_PYTHON_CMD tests/integration/final_validation.py" "Integration Test"
     fi
     
     if [ -f "validate_production_readiness.py" ]; then
-        run_test "Production Readiness" "$PYTHON_CMD validate_production_readiness.py" "Integration Test"
+        run_test "Production Readiness" "$INTEGRATION_PYTHON_CMD tests/integration/validate_production_readiness.py" "Integration Test"
     fi
     
     if [ -f "nl_integration_test.py" ]; then
-        run_test "NL Integration Test" "$PYTHON_CMD nl_integration_test.py" "Integration Test"
+        run_test "NL Integration Test" "$INTEGRATION_PYTHON_CMD tests/integration/nl_integration_test.py" "Integration Test"
     fi
     
     cd ../..
