@@ -884,6 +884,6 @@ curl -X POST "http://localhost:8000/recommendations" \
 
 ---
 
-**🚀 Built with ❤️ for LEGO enthusiasts worldwide - Now enterprise-ready!**
+**🚀 Built with ❤️ for LEGO enthusiasts!**
 
-*The most advanced LEGO recommendation system with AI-powered intelligence, production-grade scalability, and enterprise security.*
+*The most advanced LEGO recommendation system with AI-powered intelligence*
