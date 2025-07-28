@@ -104,3 +104,6 @@ gunicorn==23.0.0
 
 # Ollama
 ollama>=0.5.1  
+
+# Gradio Interface
+gradio>=4.44.1
