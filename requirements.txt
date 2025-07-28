@@ -6,6 +6,7 @@ uvicorn[standard]==0.35.0
 sqlalchemy==2.0.41
 psycopg2-binary==2.9.10
 alembic==1.16.2
+langchain-postgres==0.0.12  # LangChain native pgvector support
 
 # LangChain Stack - Updated to v0.3.x (Breaking changes - see migration guide)
 langsmith>=0.4.0,<0.5.0  # Updated for compatibility with new LangChain
@@ -34,8 +35,8 @@ accelerate>=0.25.0  # For faster model loading/inference
 chromadb==1.0.15  # Major version update - check for breaking changes
 sentence-transformers==5.0.0  # Major version update - check for breaking changes
 tiktoken==0.9.0
-faiss-cpu  # For efficient vector similarity search
-faiss-gpu  # Use instead of faiss-cpu for GPU acceleration (requires CUDA)
+# faiss-cpu  # For efficient vector similarity search - REPLACED BY PGVECTOR
+# faiss-gpu  # Use instead of faiss-cpu for GPU acceleration (requires CUDA) - REPLACED BY PGVECTOR
 
 # Data Processing
 pandas>=2.1.0
