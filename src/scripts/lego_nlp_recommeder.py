@@ -9,7 +9,8 @@ from datetime import datetime
 
 # LangChain imports (updated to avoid deprecation warnings)
 from langchain_community.embeddings import OpenAIEmbeddings
-from langchain_community.vectorstores import Chroma, FAISS
+from langchain_community.vectorstores import Chroma
+from langchain_postgres import PGVector
 from langchain_core.documents import Document
 
 from langchain_openai.chat_models.base import ChatOpenAI
@@ -124,7 +125,10 @@ class NLPRecommender:
             'conversation_session': datetime.now().isoformat()
         }
 
-        # Initialize embeddings
+        # Get database connection parameters for pgvector
+        self.db_connection_string = self._get_db_connection_string()
+
+        # Initialize embeddings and vector store
         if self.use_openai:
             self.embeddings = OpenAIEmbeddings()
             self.llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.0)
@@ -146,12 +150,12 @@ class NLPRecommender:
             
             try:
                 from langchain_ollama import OllamaLLM
-                self.llm = OllamaLLM(model="mistral")  # Use Ollama as LLM
+                self.llm = OllamaLLM(model="mistral", base_url="http://localhost:11434")  # Use Ollama as LLM
             except ImportError:
                 try:
                     # Fallback to old import if new package not available
                     from langchain_community.llms import Ollama as OllamaLLM
-                    self.llm = OllamaLLM(model="mistral")  # Use Ollama as LLM
+                    self.llm = OllamaLLM(model="mistral", base_url="http://localhost:11434")  # Use Ollama as LLM
                 except ImportError:
                     logger.warning("Ollama not available, using text-based processing only")
                     self.llm = None
@@ -165,7 +169,29 @@ class NLPRecommender:
             else:
                 logger.info("LLM initialized successfully")
 
+        # Initialize PGVector store (will be created when prep_vectorDB is called)
+        self.vectorstore = None
+
         self.is_initialized = True
+
+    def _get_db_connection_string(self) -> str:
+        """Get PostgreSQL connection string for pgvector (psycopg3 format)."""
+        try:
+            # Get connection parameters from environment
+            import os
+            host = os.getenv('DB_HOST', 'localhost')
+            port = int(os.getenv('DB_PORT', 5432))
+            database = os.getenv('DB_NAME', 'brickbrain')
+            user = os.getenv('DB_USER', 'brickbrain')
+            password = os.getenv('DB_PASSWORD', 'brickbrain_password')
+            
+            # Use psycopg3 format (note: driver name is 'psycopg' not 'psycopg3')
+            connection_string = f"postgresql+psycopg://{user}:{password}@{host}:{port}/{database}"
+            return connection_string
+        except Exception as e:
+            logger.warning(f"Could not build DB connection string: {e}")
+            # Fallback to default connection string
+            return "postgresql+psycopg://brickbrain:brickbrain_password@localhost:5432/brickbrain"
 
     def prep_vectorDB(self, limit_sets: Optional[int] = None, use_cloud: bool = False):
         """
@@ -260,92 +286,88 @@ class NLPRecommender:
         logger.info("Upload 'embeddings/lego_sets_for_cloud.json' to your cloud service")
     
     def _create_local_vectorstore(self):
-        """Create vector store locally (for development/small datasets)"""
-        # Create vector store
-        if self.use_openai:
-            self.vectorstore = Chroma.from_documents(
+        """Create vector store using LangChain's PGVector."""
+        logger.info(f"Creating PGVector store with {len(self.docs)} documents...")
+        
+        # Create PGVector store with documents
+        collection_name = "lego_sets"
+        
+        try:
+            self.vectorstore = PGVector.from_documents(
                 documents=self.docs,
                 embedding=self.embeddings,
-                persist_directory="./chroma_db"
+                collection_name=collection_name,
+                connection=self.db_connection_string,
+                use_jsonb=True,  # Use JSONB for metadata storage
             )
-        else:
-            # Process in smaller batches for FAISS to avoid memory issues
-            batch_size = 100  # Slightly larger batches for better performance
-            if len(self.docs) > batch_size:
-                logger.info(f"Creating embeddings for {len(self.docs)} documents in batches of {batch_size}")
-                
-                # Create initial vector store with first batch
-                first_batch = self.docs[:batch_size]
-                logger.info(f"Processing batch 1/{(len(self.docs) + batch_size - 1)//batch_size}...")
-                self.vectorstore = FAISS.from_documents(
-                    documents=first_batch,
-                    embedding=self.embeddings
-                )
-                
-                # Add remaining documents in batches
-                for i in range(batch_size, len(self.docs), batch_size):
-                    batch = self.docs[i:i+batch_size]
-                    batch_num = i//batch_size + 1
-                    total_batches = (len(self.docs) + batch_size - 1)//batch_size
-                    logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} docs)...")
-                    batch_vectorstore = FAISS.from_documents(
-                        documents=batch,
-                        embedding=self.embeddings
-                    )
-                    self.vectorstore.merge_from(batch_vectorstore)
-            else:
-                logger.info(f"Creating embeddings for {len(self.docs)} documents...")
-                self.vectorstore = FAISS.from_documents(
+            
+            # Set up retriever
+            self.retriever = self.vectorstore.as_retriever(search_kwargs={"k": 20})
+            
+            logger.info(f"Successfully created PGVector store with {len(self.docs)} documents")
+            
+        except Exception as e:
+            logger.error(f"Failed to create PGVector store: {e}")
+            logger.info("Falling back to Chroma vector store...")
+            
+            # Fallback to Chroma if PGVector fails
+            try:
+                self.vectorstore = Chroma.from_documents(
                     documents=self.docs,
-                    embedding=self.embeddings
+                    embedding=self.embeddings,
+                    persist_directory="./chroma_db"
                 )
-        
-        self.retriever = self.vectorstore.as_retriever(search_kwargs={"k": 20})
-        logger.info("Vector database prepared with %d documents", len(self.docs))
+                self.retriever = self.vectorstore.as_retriever(search_kwargs={"k": 20})
+                logger.info(f"Successfully created Chroma fallback store with {len(self.docs)} documents")
+            except Exception as fallback_error:
+                logger.error(f"Fallback to Chroma also failed: {fallback_error}")
+                raise
     
     def load_cloud_embeddings(self, embeddings_path: str, metadata_path: str):
         """
-        Load pre-computed embeddings from cloud processing
+        Load pre-computed embeddings from cloud processing into PGVector
         
-        :param embeddings_path: Path to numpy array of embeddings
+        :param embeddings_path: Path to numpy array of embeddings (deprecated for PGVector)
         :param metadata_path: Path to JSON file with metadata
         """
         import json
-        import numpy as np
         
-        # Load embeddings and metadata
-        embeddings = np.load(embeddings_path)
+        logger.info("Loading cloud-processed documents into PGVector...")
+        
+        # Load metadata
         with open(metadata_path, 'r') as f:
             metadata_list = json.load(f)
         
-        # Create documents
+        # Create documents from metadata
         documents = []
-        for i, meta in enumerate(metadata_list):
+        for meta in metadata_list:
             doc = Document(
                 page_content=meta['content'],
                 metadata=meta['metadata']
             )
             documents.append(doc)
         
-        # Create FAISS index from pre-computed embeddings
-        dimension = embeddings.shape[1]
-        import faiss
-        
-        index = faiss.IndexFlatIP(dimension)  # Inner product for cosine similarity
-        index.add(embeddings.astype('float32'))
-        
-        # Create FAISS vectorstore with pre-computed index
-        self.vectorstore = FAISS(
-            embedding_function=self.embeddings,
-            index=index,
-            docstore=faiss.InMemoryDocstore({str(i): doc for i, doc in enumerate(documents)}),
-            index_to_docstore_id={i: str(i) for i in range(len(documents))}
-        )
-        
-        self.retriever = self.vectorstore.as_retriever(search_kwargs={"k": 20})
+        # Create PGVector store (embeddings will be computed automatically)
         self.docs = documents
+        collection_name = "lego_sets_cloud"
         
-        logger.info(f"Loaded cloud-processed vector database with {len(documents)} documents")
+        try:
+            self.vectorstore = PGVector.from_documents(
+                documents=documents,
+                embedding=self.embeddings,
+                collection_name=collection_name,
+                connection=self.db_connection_string,
+                use_jsonb=True,
+            )
+            
+            # Set up retriever
+            self.retriever = self.vectorstore.as_retriever(search_kwargs={"k": 20})
+            
+            logger.info(f"Successfully loaded {len(documents)} cloud-processed documents into PGVector")
+            
+        except Exception as e:
+            logger.error(f"Failed to load into PGVector: {e}")
+            raise
     
     def _create_set_description(self, row) -> str:
         """
@@ -1576,46 +1598,53 @@ class NLPRecommender:
         }
 
     def save_embeddings(self, path: str):
-        """Save vector store to disk"""
-        if isinstance(self.vectorstore, FAISS):
+        """Save vector store to disk (PGVector persists automatically)"""
+        if hasattr(self.vectorstore, 'save_local'):
+            # For compatibility with other vector stores
             self.vectorstore.save_local(path)
-        elif isinstance(self.vectorstore, Chroma):
-            # Chroma persists automatically
-            pass
+        else:
+            # PGVector stores data in PostgreSQL automatically
+            logger.info("PGVector data is automatically persisted in PostgreSQL database")
     
     def load_embeddings(self, path: str):
-        """Load vector store from disk"""
+        """Load or connect to existing vector store"""
         try:
             if self.use_openai:
-                self.vectorstore = Chroma(
-                    persist_directory=path,
-                    embedding_function=self.embeddings
-                )
-            elif os.path.exists(path):
-                logger.info(f"Loading FAISS index from {path}")
-                # Check if files exist
-                index_file = os.path.join(path, "index.faiss")
-                pkl_file = os.path.join(path, "index.pkl")
-                
-                if os.path.exists(index_file) and os.path.exists(pkl_file):
-                    self.vectorstore = FAISS.load_local(
-                        path, 
-                        self.embeddings, 
-                        allow_dangerous_deserialization=True
+                # For OpenAI, try to connect to existing PGVector collection
+                try:
+                    self.vectorstore = PGVector(
+                        embeddings=self.embeddings,
+                        collection_name="lego_sets",
+                        connection=self.db_connection_string,
+                        use_jsonb=True,
                     )
-                else:
-                    logger.warning(f"FAISS index files not found in {path}")
-                    return False
+                    logger.info("Connected to existing PGVector collection")
+                except Exception as e:
+                    logger.warning(f"Could not connect to PGVector: {e}, falling back to Chroma")
+                    self.vectorstore = Chroma(
+                        persist_directory=path,
+                        embedding_function=self.embeddings
+                    )
             else:
-                logger.warning(f"Embeddings path {path} does not exist")
-                return False
+                # For local embeddings, try to connect to existing PGVector collection
+                try:
+                    self.vectorstore = PGVector(
+                        embeddings=self.embeddings,
+                        collection_name="lego_sets", 
+                        connection=self.db_connection_string,
+                        use_jsonb=True,
+                    )
+                    logger.info("Connected to existing PGVector collection")
+                except Exception as e:
+                    logger.warning(f"Could not connect to PGVector: {e}")
+                    return False
             
             if self.vectorstore:
                 self.retriever = self.vectorstore.as_retriever(
                     search_type="similarity",
                     search_kwargs={"k": 20}
                 )
-                logger.info("Embeddings loaded successfully")
+                logger.info("Vector store connected successfully")
                 return True
             else:
                 logger.warning("Failed to load embeddings")
