@@ -52,7 +52,6 @@ dependencies:
     - chromadb==1.0.15
     - sentence-transformers==5.0.0
     - tiktoken==0.9.0
-    # - faiss-cpu  # REPLACED BY PGVECTOR
     
     # Web Scraping and Data Processing
     - beautifulsoup4==4.13.4
