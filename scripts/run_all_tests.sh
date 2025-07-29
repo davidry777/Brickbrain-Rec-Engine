@@ -293,9 +293,9 @@ if [ "$RUN_INTEGRATION" = true ]; then
     
     # For integration tests, always use Docker environment regardless of local setup
     if docker-compose ps app | grep -q "Up"; then
-        INTEGRATION_PYTHON_CMD="docker-compose exec app conda run -n brickbrain-rec python"
+        INTEGRATION_PYTHON_CMD="docker-compose exec -T app conda run -n brickbrain-rec python"
     elif docker exec brickbrain-app true 2>/dev/null; then
-        INTEGRATION_PYTHON_CMD="docker exec brickbrain-app /opt/conda/envs/brickbrain-rec/bin/python"
+        INTEGRATION_PYTHON_CMD="docker exec -T brickbrain-app conda run -n brickbrain-rec python"
     else
         print_warning "Docker container not available - integration tests require Docker environment"
         INTEGRATION_PYTHON_CMD="$PYTHON_CMD"
