@@ -72,7 +72,6 @@ async def lifespan(app: FastAPI):
                     # Start with a smaller dataset for faster initialization
                     logger.info("Processing top 1000 sets by popularity for initial setup...")
                     nl_recommender.prep_vectorDB(limit_sets=1000)
-                    os.makedirs("./embeddings", exist_ok=True)
                     nl_recommender.save_embeddings(embeddings_path)
                     logger.info("Initial embeddings created successfully")
             else:
@@ -80,7 +79,6 @@ async def lifespan(app: FastAPI):
                 # Start with a smaller dataset for faster initialization
                 logger.info("Processing top 1000 sets by popularity for initial setup...")
                 nl_recommender.prep_vectorDB(limit_sets=1000)
-                os.makedirs("./embeddings", exist_ok=True)
                 nl_recommender.save_embeddings(embeddings_path)
                 logger.info("Initial embeddings created successfully")
         else:
