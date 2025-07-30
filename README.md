@@ -50,6 +50,37 @@ A production-ready, sophisticated recommendation system that helps LEGO enthusia
 - **📝 Audit Logging**: Comprehensive activity tracking and compliance reporting
 - **🔐 Enterprise Security**: SSO integration, role-based access control
 
+## 🖼️ Interface Showcase
+
+The Brickbrain LEGO Recommendation System features a beautiful, intuitive web interface built with Gradio. Here's what the enhanced system looks like in action:
+
+### 🏠 Main Dashboard
+![Main Interface](imgs/main_menu.png)
+*The main dashboard showcasing all available features including System Health, Natural Language Search, Conversational AI, Query Understanding, Similar Sets finder, and User Profile management.*
+
+### 🔍 Natural Language Search
+![Natural Language Search Menu](imgs/NLS_menu.png)
+*Advanced natural language search interface where users can enter complex queries like "Star Wars spaceship for my 10 year old nephew's birthday with lots of details"*
+
+![Search Results](imgs/NLS_results.png)
+*Intelligent search results showing AI-powered recommendations with detailed explanations, relevance scores, and why each set matches the query.*
+
+### 💬 Conversational AI
+![Conversational AI](imgs/conversational_ai.png)
+*Context-aware conversational interface where users can chat naturally about LEGO recommendations, with the AI remembering previous interactions and providing personalized suggestions.*
+
+### 🧠 Query Understanding
+![Query Understanding](imgs/query_understanding.png)
+*Real-time demonstration of how the AI interprets and understands complex natural language queries, extracting entities like age, themes, occasions, and preferences.*
+
+### 🔗 Similar Sets Explorer
+![Similar Sets](imgs/similar_sets.png)
+*Semantic similarity search that finds LEGO sets similar to any given set or description using advanced AI embeddings and vector search.*
+
+### 👤 User Profile Management
+![User Profile](imgs/user_profile.png)
+*Comprehensive user profile creation and management system for personalized recommendations, including age, experience level, favorite themes, and recommendation algorithm selection.*
+
 ## 🏗️ Architecture
 
 ```
