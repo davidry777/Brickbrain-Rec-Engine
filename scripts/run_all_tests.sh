@@ -217,18 +217,22 @@ echo "=================="
 
 cd tests/unit
 
-# Determine python command
-if [ -n "$CONDA_DEFAULT_ENV" ] || [ -f "/opt/conda/envs/brickbrain-rec/bin/python" ]; then
-    PYTHON_CMD="conda run -n brickbrain-rec python"
-elif docker-compose ps app | grep -q "Up"; then
+# Determine python command - prioritize Docker container execution
+if docker-compose ps app | grep -q "Up"; then
     PYTHON_CMD="docker-compose exec -T app conda run -n brickbrain-rec python"
+    print_info "Using Docker container for unit tests"
+elif [ -n "$CONDA_DEFAULT_ENV" ] || [ -f "/opt/conda/envs/brickbrain-rec/bin/python" ]; then
+    PYTHON_CMD="conda run -n brickbrain-rec python"
+    print_info "Using local conda environment for unit tests"
 else
     PYTHON_CMD="python3"
+    print_info "Using system Python for unit tests"
 fi
 
 run_test "Database Connection Tests" "$PYTHON_CMD test_database.py" "Unit Test"
 run_test "Recommendation System Tests" "$PYTHON_CMD test_recommendations.py" "Unit Test"
 run_test "NLP Recommender Tests" "$PYTHON_CMD test_nlp_recommender.py" "Unit Test"
+run_test "Enhanced Theme Detection Tests" "$PYTHON_CMD test_enhanced_themes.py" "Unit Test"
 
 cd ../..
 
@@ -298,29 +302,47 @@ fi
 # 6. Natural Language Features Tests (Optional)
 # ========================================
 
-if [ "$RUN_NL_ADVANCED" = true ] && [ "$API_RUNNING" = true ]; then
+if [ "$RUN_NL_ADVANCED" = true ]; then
     echo -e "\n${BLUE}6. ADVANCED NATURAL LANGUAGE TESTS${NC}"
     echo "=================================="
     
-    # Test multiple query scenarios
-    declare -a test_queries=(
-        "star wars sets for kids"
-        "birthday gift for 8 year old"
-        "challenging technic sets"
-        "small city sets under 500 pieces"
-    )
+    # Enhanced Theme Detection Unit Tests in Docker
+    echo -e "\n${BLUE}🎯 Enhanced Theme Detection Tests (Docker)${NC}"
+    cd tests/unit
     
-    for query in "${test_queries[@]}"; do
-        run_test "NL Query: '$query'" "curl -s -X POST http://localhost:8000/search/natural -H 'Content-Type: application/json' -d '{\"query\": \"$query\", \"top_k\": 3}' | grep -q 'results'" "Advanced NL Test"
-    done
+    # Use Docker container for enhanced theme detection tests
+    if docker-compose ps app | grep -q "Up"; then
+        DOCKER_PYTHON_CMD="docker-compose exec -T app conda run -n brickbrain-rec python"
+        run_test "Enhanced Theme Detection (Docker)" "$DOCKER_PYTHON_CMD test_enhanced_themes.py" "Enhanced NL Test"
+    else
+        print_warning "Docker app container not running - using fallback Python command"
+        run_test "Enhanced Theme Detection (Fallback)" "$PYTHON_CMD test_enhanced_themes.py" "Enhanced NL Test"
+    fi
+    
+    cd ../..
+    
+    # API-based NL tests (only if API is running)
+    if [ "$API_RUNNING" = true ]; then
+        echo -e "\n${BLUE}🌐 API Natural Language Tests${NC}"
+        
+        # Test multiple query scenarios
+        declare -a test_queries=(
+            "star wars sets for kids"
+            "birthday gift for 8 year old"
+            "challenging technic sets"
+            "small city sets under 500 pieces"
+        )
+        
+        for query in "${test_queries[@]}"; do
+            run_test "NL Query: '$query'" "curl -s -X POST http://localhost:8000/search/natural -H 'Content-Type: application/json' -d '{\"query\": \"$query\", \"top_k\": 3}' | grep -q 'results'" "Advanced NL Test"
+        done
+    else
+        print_info "API not running - skipping API-based NL tests"
+    fi
 else
     echo -e "\n${BLUE}6. ADVANCED NATURAL LANGUAGE TESTS${NC}"
     echo "=================================="
-    if [ "$API_RUNNING" = true ]; then
-        print_info "Skipped - Use --nl-advanced to run"
-    else
-        print_info "Skipped - API not running"
-    fi
+    print_info "Skipped - Use --nl-advanced to run"
 fi
 
 # ========================================
