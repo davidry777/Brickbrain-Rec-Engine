@@ -195,5 +195,4 @@ gradio/__pycache__/
 gradio_outputs/
 flagged/
 =4.0.0
-.env.bak
 conversation_memory.db
