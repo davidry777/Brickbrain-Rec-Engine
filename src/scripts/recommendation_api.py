@@ -873,25 +873,39 @@ async def health_check(db: psycopg2.extensions.connection = Depends(get_db)):
         except Exception as db_e:
             logger.warning(f"Database check failed: {db_e}")
         
-        # Check NLP system status
+        # Check NLP system status (HuggingFace-based system)
         nlp_status = "not_ready"
-        if nl_recommender:
+        if hf_nlp_recommender:
             try:
-                # Test if NLP recommender can process a basic query
+                # Test if HuggingFace NLP recommender is properly initialized
+                if hasattr(hf_nlp_recommender, 'embedding_model') and hf_nlp_recommender.embedding_model and hasattr(hf_nlp_recommender, 'is_initialized') and hf_nlp_recommender.is_initialized:
+                    nlp_status = "ready"
+            except Exception as nlp_e:
+                logger.warning(f"HuggingFace NLP system check failed: {nlp_e}")
+        elif nl_recommender:
+            try:
+                # Fallback check for legacy system
                 test_result = nl_recommender.process_nl_query("test", None)
                 if test_result:
                     nlp_status = "ready"
             except Exception as nlp_e:
-                logger.warning(f"NLP system check failed: {nlp_e}")
+                logger.warning(f"Legacy NLP system check failed: {nlp_e}")
         
         # Check vector database status
         vectordb_status = "not_ready"
-        if nl_recommender and hasattr(nl_recommender, 'vectorstore') and nl_recommender.vectorstore:
+        if hf_nlp_recommender:
             try:
-                # Test if vector store is accessible
+                # Check if HuggingFace vector database is ready
+                if hasattr(hf_nlp_recommender, 'embedding_model') and hf_nlp_recommender.embedding_model:
+                    vectordb_status = "ready"
+            except Exception as vec_e:
+                logger.warning(f"HuggingFace Vector DB check failed: {vec_e}")
+        elif nl_recommender and hasattr(nl_recommender, 'vectorstore') and nl_recommender.vectorstore:
+            try:
+                # Fallback check for legacy vector store
                 vectordb_status = "ready"
             except Exception as vec_e:
-                logger.warning(f"Vector DB check failed: {vec_e}")
+                logger.warning(f"Legacy Vector DB check failed: {vec_e}")
         
         # Check if embeddings exist
         embeddings_exist = os.path.exists("./embeddings/faiss_index")

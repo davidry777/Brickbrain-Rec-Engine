@@ -49,7 +49,6 @@ class BrickbrainGradioInterface:
 **NLP System**: {"🟢 Ready" if data.get('nlp_status') == 'ready' else "🔴 Not Ready"}
 **Vector DB**: {"🟢 Initialized" if data.get('vectordb_status') == 'ready' else "🔴 Not Ready"}
 **Uptime**: {data.get('uptime', 'Unknown')}
-**Models**: {', '.join(data.get('available_models', []))}
                 """
             else:
                 status = "🔴 API Issues"
