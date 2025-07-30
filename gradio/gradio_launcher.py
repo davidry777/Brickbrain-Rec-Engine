@@ -70,11 +70,108 @@ def natural_language_search(query):
     except Exception as e:
         return f"❌ Error: {str(e)}"
 
+# Create custom theme with yellow background, red accents, and Futura font
+custom_theme = gr.themes.Soft().set(
+    # Background colors
+    background_fill_primary="#FFEB3B",  # Yellow background
+    background_fill_secondary="#FFF9C4",  # Lighter yellow for secondary areas
+    
+    # Button and accent colors (change purple to red)
+    button_primary_background_fill="#F44336",  # Red primary buttons
+    button_primary_background_fill_hover="#D32F2F",  # Darker red on hover
+    button_primary_border_color="#F44336",
+    button_primary_text_color="white",
+    
+    button_secondary_background_fill="#FFCDD2",  # Light red for secondary buttons
+    button_secondary_background_fill_hover="#FFAB91",  # Orange-red on hover
+    button_secondary_border_color="#F44336",
+    button_secondary_text_color="#D32F2F",
+    
+    # Slider and interactive elements
+    slider_color="#F44336",  # Red sliders
+    checkbox_background_color="#F44336",  # Red checkboxes
+    
+    # Input field styling
+    input_background_fill="#FFFDE7",  # Very light yellow for inputs
+    input_border_color="#F57F17",  # Darker yellow border
+    
+    # Tab styling
+    button_cancel_background_fill="#FFCDD2",  # Light red for inactive tabs
+    button_cancel_text_color="#D32F2F",
+)
+
+# Add custom CSS for additional styling including Futura font
+custom_css = """
+@import url('https://fonts.googleapis.com/css2?family=Futura:wght@400;500;700&display=swap');
+
+/* Apply Futura font globally */
+* {
+    font-family: 'Futura', Arial, sans-serif !important;
+}
+
+/* Yellow background for main container */
+.gradio-container {
+    background-color: #FFEB3B !important;
+}
+
+/* Override Gradio's default fonts */
+.gradio-container * {
+    font-family: 'Futura', Arial, sans-serif !important;
+}
+
+/* Ensure buttons use Futura */
+button {
+    font-family: 'Futura', Arial, sans-serif !important;
+    font-weight: 500 !important;
+}
+
+/* Ensure text inputs use Futura */
+input, textarea, select {
+    font-family: 'Futura', Arial, sans-serif !important;
+}
+
+/* Style markdown headings with red color */
+.markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 {
+    color: #D32F2F !important;
+    font-family: 'Futura', Arial, sans-serif !important;
+    font-weight: 700 !important;
+}
+
+/* Style textboxes and text areas */
+.textbox, .textarea {
+    background-color: #FFFDE7 !important;
+    border: 1px solid #F57F17 !important;
+}
+
+/* Custom styling for small buttons */
+.btn-sm {
+    background-color: #FFCDD2 !important;
+    color: #D32F2F !important;
+    border: 1px solid #F44336 !important;
+    font-family: 'Futura', Arial, sans-serif !important;
+}
+
+.btn-sm:hover {
+    background-color: #F44336 !important;
+    color: white !important;
+}
+
+/* Style the main title */
+.main-title {
+    color: #D32F2F !important;
+    font-weight: 700 !important;
+}
+"""
+
 # Create simplified Gradio interface
-with gr.Blocks(title="🧱 Brickbrain LEGO Recommender - Simple Demo") as demo:
+with gr.Blocks(title="🧱 Brickbrain LEGO Recommender - Simple Demo", theme=custom_theme, css=custom_css) as demo:
     
     gr.Markdown("""
+    <div class="main-title">
+    
     # 🧱 Brickbrain LEGO Recommendation System - Simple Demo
+    
+    </div>
     
     This is a simplified demonstration of the Brickbrain system. 
     
