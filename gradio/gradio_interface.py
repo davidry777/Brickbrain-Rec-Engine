@@ -508,12 +508,12 @@ interface = BrickbrainGradioInterface()
 
 # Define example queries for natural language search
 example_queries = [
-    "Star Wars sets with lots of pieces for adults",
-    "Birthday gift for my 8 year old nephew who loves cars",
-    "Detailed Technic sets between 1000 and 2000 pieces",
-    "Simple Creator sets for beginners under $50",
-    "Architecture sets for display",
-    "Sets similar to the Millennium Falcon but smaller"
+    "Star Wars spaceship for my 10 year old nephew's birthday with lots of details",
+    "Challenging Technic vehicle with motors for expert builder daughter Christmas",
+    "Small City police sets under 300 pieces for beginner 6 year old",
+    "Medieval castle with minifigures for experienced adult collector display",
+    "Quick weekend build Creator 3-in-1 vehicle under $40",
+    "Harry Potter magical building with lights and sounds for 12 year old wizard fan"
 ]
 
 # Create the Gradio interface
@@ -523,13 +523,14 @@ with gr.Blocks(title="🧱 Brickbrain LEGO Recommender", theme=gr.themes.Soft())
     
     Welcome to the interactive demo of the Brickbrain LEGO Recommendation System! This showcases the power of AI-driven LEGO set recommendations using natural language processing, machine learning, and conversational AI.
     
-    ## 🚀 Features Demonstrated:
-    - **Natural Language Search**: Find LEGO sets using everyday language
-    - **Conversational AI**: Chat naturally about LEGO recommendations
-    - **Query Understanding**: See how AI interprets your requests
-    - **Semantic Similarity**: Find similar sets based on descriptions
-    - **Personalized Recommendations**: Get recommendations tailored to user preferences
-    - **System Health**: Monitor the AI system status
+    ## 🚀 Enhanced Features Demonstrated:
+    - **Advanced Natural Language Search**: Find LEGO sets using complex, detailed descriptions
+    - **Rich Entity Extraction**: AI understands age, occasion, recipient, complexity, themes, and more
+    - **Smart Theme Detection**: Access to 411+ LEGO themes with fuzzy matching and hierarchical relationships
+    - **Conversational AI**: Chat naturally with context memory and personalized responses
+    - **Intent Recognition**: AI determines if you're searching, asking for gifts, or seeking advice
+    - **Multi-dimensional Matching**: Combines theme, complexity, age-appropriateness, and special features
+    - **Real-time Query Understanding**: See exactly how AI interprets your complex requests
     """)
     
     # System Health Tab
@@ -550,13 +551,23 @@ with gr.Blocks(title="🧱 Brickbrain LEGO Recommender", theme=gr.themes.Soft())
     
     # Natural Language Search Tab
     with gr.Tab("🔍 Natural Language Search"):
-        gr.Markdown("### Search for LEGO sets using natural language")
+        gr.Markdown("""
+        ### 🧠 Enhanced AI-Powered LEGO Search
+        
+        Our advanced system understands complex queries with rich context. Try detailed descriptions including:
+        - **Recipient & Age**: "for my 10 year old nephew", "adult collector"
+        - **Occasion**: "birthday gift", "Christmas present", "weekend project"  
+        - **Complexity**: "beginner friendly", "challenging build", "expert level"
+        - **Features**: "with motors", "lights and sounds", "lots of minifigures"
+        - **Themes**: Any of 411+ LEGO themes with intelligent matching
+        - **Constraints**: "under $50", "between 500-1000 pieces", "small display"
+        """)
         
         with gr.Row():
             with gr.Column(scale=3):
                 search_query = gr.Textbox(
-                    label="Search Query",
-                    placeholder="e.g., 'Star Wars sets for adults with lots of pieces'",
+                    label="Enhanced Search Query",
+                    placeholder="e.g., 'Star Wars spaceship for my 10 year old nephew's birthday with lots of details'",
                     lines=2
                 )
             with gr.Column(scale=1):
@@ -596,12 +607,21 @@ with gr.Blocks(title="🧱 Brickbrain LEGO Recommender", theme=gr.themes.Soft())
     
     # Conversational AI Tab
     with gr.Tab("💬 Conversational AI"):
-        gr.Markdown("### Chat naturally about LEGO recommendations with AI memory")
+        gr.Markdown("""
+        ### 🤖 Intelligent LEGO Assistant with Context Memory
+        
+        Our AI assistant understands context and remembers your conversation. It can:
+        - **Extract Rich Details**: Understands recipient, age, experience level, occasions, and preferences
+        - **Remember Context**: Keeps track of what you've discussed and your preferences
+        - **Smart Recommendations**: Combines your requirements with LEGO expertise
+        - **Follow-up Questions**: Ask for clarifications or more specific recommendations
+        - **Theme Expertise**: Knows relationships between 411+ LEGO themes and can suggest alternatives
+        """)
         
         chatbot = gr.Chatbot(
-            label="LEGO Recommendation Chat",
+            label="Enhanced LEGO Recommendation Chat",
             height=400,
-            placeholder="Start chatting about LEGO sets..."
+            placeholder="Start chatting about LEGO sets... Try: 'I need a detailed space station for my teenage son who loves complex builds'"
         )
         
         with gr.Row():
@@ -632,12 +652,12 @@ with gr.Blocks(title="🧱 Brickbrain LEGO Recommender", theme=gr.themes.Soft())
         # Example conversation starters
         gr.Markdown("### 💡 Try These Conversation Starters:")
         conversation_examples = [
-            "I'm looking for a gift for my nephew who loves space",
-            "What are some good sets for adult collectors?",
-            "Show me something similar to the Hogwarts Castle",
-            "I want to build something challenging this weekend",
-            "What's good for someone new to LEGO?",
-            "I need something under $100 for a birthday"
+            "I need a detailed space station for my teenage son who loves complex builds",
+            "What's a good Christmas gift for my 8 year old daughter who's new to LEGO?",
+            "Show me motorized Technic vehicles perfect for expert builders under $200",
+            "I want something like the Hogwarts Castle but smaller for display in my office",
+            "My nephew loves pirates and adventures - what would you recommend?",
+            "Looking for advanced architecture sets with lots of small details for adults"
         ]
         
         with gr.Row():
