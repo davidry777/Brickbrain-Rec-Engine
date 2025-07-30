@@ -52,6 +52,8 @@ A production-ready, sophisticated recommendation system that helps LEGO enthusia
 
 ## 🖼️ Interface Showcase
 
+*Note: Current demo link to interface not available. The following screenshots are for demonstration purposes only and may not reflect the final design.*
+
 The Brickbrain LEGO Recommendation System features a beautiful, intuitive web interface built with Gradio. Here's what the enhanced system looks like in action:
 
 ### 🏠 Main Dashboard
