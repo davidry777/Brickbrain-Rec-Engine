@@ -1,0 +1,943 @@
+"""
+HuggingFace-based NLP Recommender for LEGO recommendation system
+
+This module provides natural language processing capabilities using HuggingFace models
+instead of Ollama, optimized for LEGO-specific queries and conversational AI.
+"""
+
+import os
+import logging
+from typing import List, Dict, Optional, Any, Tuple
+from dataclasses import dataclass
+import numpy as np
+import pandas as pd
+import torch
+import json
+import re
+from datetime import datetime
+
+# HuggingFace imports
+from transformers import (
+    AutoTokenizer, AutoModelForSequenceClassification,
+    AutoModelForCausalLM, pipeline,
+    BitsAndBytesConfig
+)
+from sentence_transformers import SentenceTransformer
+
+# LangChain imports (for compatibility with existing system)
+from langchain_core.documents import Document
+from langchain_postgres import PGVector
+from langchain_core.messages import HumanMessage, AIMessage
+from pydantic import BaseModel, Field
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@dataclass
+class NLQueryResult:
+    """Result from natural language query processing"""
+    intent: str
+    filters: Dict[str, Any]
+    confidence: float
+    extracted_entities: Dict[str, Any]
+    semantic_query: str
+
+@dataclass
+class ConversationContext:
+    """Context for maintaining conversation state"""
+    user_preferences: Dict[str, Any]
+    previous_recommendations: List[Dict[str, Any]]
+    current_session_queries: List[str]
+    follow_up_context: Dict[str, Any]
+    conversation_summary: str
+
+class SearchFilters(BaseModel):
+    """Pydantic model for parsed search filters"""
+    themes: Optional[List[str]] = Field(None, description="LEGO themes")
+    min_pieces: Optional[int] = Field(None, description="Minimum number of pieces")
+    max_pieces: Optional[int] = Field(None, description="Maximum number of pieces")
+    min_age: Optional[int] = Field(None, description="Minimum age recommendation")
+    max_age: Optional[int] = Field(None, description="Maximum age recommendation")
+    year_range: Optional[List[int]] = Field(None, description="Year range [start, end]")
+    price_range: Optional[List[float]] = Field(None, description="Price range [min, max]")
+
+class HuggingFaceConversationMemory:
+    """Conversation memory optimized for HuggingFace models"""
+    
+    def __init__(self, max_history: int = 20):
+        self.max_history = max_history
+        self.conversations = []
+        self.context_summaries = []
+    
+    def add_interaction(self, user_message: str, assistant_response: str, context: Dict = None):
+        """Add a conversation interaction"""
+        interaction = {
+            "timestamp": datetime.now().isoformat(),
+            "user_message": user_message,
+            "assistant_response": assistant_response,
+            "context": context or {}
+        }
+        self.conversations.append(interaction)
+        
+        # Keep only recent conversations
+        if len(self.conversations) > self.max_history:
+            self.conversations = self.conversations[-self.max_history:]
+    
+    def get_recent_context(self, n_interactions: int = 3) -> str:
+        """Get recent conversation context as formatted string"""
+        if not self.conversations:
+            return ""
+        
+        recent = self.conversations[-n_interactions:]
+        context_parts = []
+        
+        for interaction in recent:
+            context_parts.append(f"User: {interaction['user_message']}")
+            context_parts.append(f"Assistant: {interaction['assistant_response'][:100]}...")
+        
+        return "\n".join(context_parts)
+    
+    def get_conversation_summary(self) -> str:
+        """Generate a summary of the conversation"""
+        if not self.conversations:
+            return "No previous conversation."
+        
+        # Simple rule-based summary
+        themes_mentioned = set()
+        user_preferences = []
+        
+        for conv in self.conversations[-5:]:  # Last 5 interactions
+            user_msg = conv['user_message'].lower()
+            
+            # Extract themes mentioned
+            lego_themes = ['star wars', 'harry potter', 'technic', 'city', 'creator', 
+                          'friends', 'ninjago', 'architecture', 'ideas', 'castle']
+            for theme in lego_themes:
+                if theme in user_msg:
+                    themes_mentioned.add(theme.title())
+            
+            # Extract preferences
+            if any(word in user_msg for word in ['like', 'love', 'prefer', 'favorite']):
+                user_preferences.append(user_msg)
+        
+        summary_parts = []
+        if themes_mentioned:
+            summary_parts.append(f"Interested in: {', '.join(themes_mentioned)}")
+        if user_preferences:
+            summary_parts.append(f"Recent preference: {user_preferences[-1][:50]}...")
+        
+        return "; ".join(summary_parts) if summary_parts else "General LEGO interest"
+    
+    def clear(self):
+        """Clear conversation history"""
+        self.conversations = []
+        self.context_summaries = []
+
+class HuggingFaceNLPRecommender:
+    """
+    HuggingFace-based Natural Language Processing for LEGO recommendations
+    
+    This class replaces the Ollama-based implementation with optimized HuggingFace models
+    for better performance and local deployment capabilities.
+    """
+    
+    def __init__(self, dbcon, use_quantization: bool = True, device: str = None):
+        """
+        Initialize the HuggingFace NLP Recommender
+        
+        Args:
+            dbcon: Database connection
+            use_quantization: Whether to use 4-bit quantization for memory efficiency
+            device: Device to use ('cuda', 'mps', 'cpu'). Auto-detected if None.
+        """
+        self.dbconn = dbcon
+        self.device = device or self._detect_device()
+        self.use_quantization = use_quantization and self.device != 'cpu'
+        
+        logger.info(f"Initializing HuggingFace NLP Recommender on device: {self.device}")
+        
+        # Initialize models
+        self._init_models()
+        
+        # Initialize conversation memory
+        self.conversation_memory = HuggingFaceConversationMemory()
+        
+        # User context storage
+        self.user_context = {
+            'preferences': {},
+            'previous_searches': [],
+            'liked_sets': [],
+            'disliked_sets': [],
+            'conversation_session': datetime.now().isoformat()
+        }
+        
+        # Vector store for semantic search
+        self.vectorstore = None
+        self.embedding_model = None
+        
+        # Initialize vector database
+        self._init_vector_store()
+        
+        # LEGO-specific intents and patterns
+        self.intents = {
+            'search': ['find', 'search', 'looking for', 'show me', 'want', 'need', 'browse'],
+            'recommend_similar': ['similar to', 'like', 'comparable', 'alternative to', 'reminds me of'],
+            'gift_recommendation': ['gift', 'present', 'birthday', 'christmas', 'holiday', 
+                                  'for my nephew', 'for my son', 'for my daughter', 'for a child'],
+            'collection_advice': ['should i buy', 'worth it', 'good investment', 'collection', 
+                                'for my collection', 'complete my collection'],
+            'budget_conscious': ['cheap', 'affordable', 'budget', 'under', 'less than', 'save money'],
+            'advanced_builder': ['complex', 'challenging', 'detailed', 'advanced', 'expert level'],
+            'beginner_friendly': ['easy', 'simple', 'beginner', 'starter', 'first time']
+        }
+        
+        self.is_initialized = True
+        logger.info("HuggingFace NLP Recommender initialized successfully")
+    
+    def _detect_device(self) -> str:
+        """Auto-detect the best available device"""
+        if torch.cuda.is_available():
+            return "cuda"
+        elif torch.backends.mps.is_available():
+            return "mps"
+        else:
+            return "cpu"
+    
+    def _init_models(self):
+        """Initialize HuggingFace models for different NLP tasks"""
+        
+        # Quantization config for memory efficiency
+        quantization_config = None
+        if self.use_quantization:
+            quantization_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4"
+            )
+        
+        # 1. Intent Classification Model
+        # Using a lightweight BERT model fine-tuned for classification
+        self.intent_model_name = "microsoft/DialoGPT-medium"  # Good for dialogue understanding
+        try:
+            self.intent_tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
+            # For now, we'll use rule-based intent classification but keep model ready for fine-tuning
+            logger.info("Intent classification: Using rule-based approach with BERT tokenizer ready")
+        except Exception as e:
+            logger.warning(f"Failed to load intent model: {e}")
+            self.intent_tokenizer = None
+        
+        # 2. Entity Recognition Pipeline
+        # Using a pre-trained NER model
+        try:
+            self.ner_pipeline = pipeline(
+                "ner", 
+                model="dbmdz/bert-large-cased-finetuned-conll03-english",
+                aggregation_strategy="simple",
+                device=0 if self.device == "cuda" else -1
+            )
+            logger.info("Named Entity Recognition model loaded successfully")
+        except Exception as e:
+            logger.warning(f"Failed to load NER model: {e}")
+            self.ner_pipeline = None
+        
+        # 3. Conversational AI Model
+        # Using a lightweight conversational model
+        self.conversation_model_name = "microsoft/DialoGPT-small"  # Good balance of size and quality
+        try:
+            self.conversation_tokenizer = AutoTokenizer.from_pretrained(self.conversation_model_name)
+            self.conversation_model = AutoModelForCausalLM.from_pretrained(
+                self.conversation_model_name,
+                quantization_config=quantization_config if self.device == "cuda" else None,
+                torch_dtype=torch.float16 if self.device != "cpu" else torch.float32,
+                device_map="auto" if self.device == "cuda" else None
+            )
+            if self.device != "cuda":
+                self.conversation_model.to(self.device)
+            
+            # Set pad token
+            if self.conversation_tokenizer.pad_token is None:
+                self.conversation_tokenizer.pad_token = self.conversation_tokenizer.eos_token
+            
+            logger.info("Conversational model loaded successfully")
+        except Exception as e:
+            logger.warning(f"Failed to load conversational model: {e}")
+            self.conversation_model = None
+            self.conversation_tokenizer = None
+        
+        # 4. Text Generation Pipeline for Query Understanding
+        try:
+            self.text_generator = pipeline(
+                "text-generation",
+                model="distilgpt2",  # Lightweight but effective
+                device=0 if self.device == "cuda" else -1,
+                torch_dtype=torch.float16 if self.device != "cpu" else torch.float32
+            )
+            logger.info("Text generation pipeline loaded successfully")
+        except Exception as e:
+            logger.warning(f"Failed to load text generation pipeline: {e}")
+            self.text_generator = None
+    
+    def _init_vector_store(self):
+        """Initialize vector store for semantic search"""
+        try:
+            # Use sentence-transformers for embeddings (optimized for semantic search)
+            self.embedding_model = SentenceTransformer(
+                'all-MiniLM-L6-v2',
+                device=self.device
+            )
+            
+            # Initialize PostgreSQL vector store
+            self.db_connection_string = self._get_db_connection_string()
+            
+            logger.info("Vector store initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize vector store: {e}")
+            self.embedding_model = None
+    
+    def _get_db_connection_string(self) -> str:
+        """Get PostgreSQL connection string for pgvector"""
+        try:
+            host = os.getenv('DB_HOST', 'localhost')
+            port = int(os.getenv('DB_PORT', 5432))
+            database = os.getenv('DB_NAME', 'brickbrain')
+            user = os.getenv('DB_USER', 'brickbrain')
+            password = os.getenv('DB_PASSWORD', 'brickbrain_password')
+            
+            return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{database}"
+        except Exception as e:
+            logger.warning(f"Could not build DB connection string: {e}")
+            return "postgresql+psycopg://brickbrain:brickbrain_password@localhost:5432/brickbrain"
+    
+    def classify_intent(self, query: str, conversation_context: str = "") -> str:
+        """
+        Classify the intent of a user query using HuggingFace models
+        
+        Args:
+            query: User query string
+            conversation_context: Previous conversation context
+            
+        Returns:
+            Detected intent as string
+        """
+        query_lower = query.lower()
+        
+        # Enhanced rule-based classification with context awareness
+        intent_scores = {}
+        
+        for intent, keywords in self.intents.items():
+            score = 0
+            for keyword in keywords:
+                if keyword in query_lower:
+                    score += 1
+                    # Boost score for exact matches
+                    if keyword in query_lower.split():
+                        score += 0.5
+            
+            # Context-based boosting
+            if conversation_context:
+                context_lower = conversation_context.lower()
+                for keyword in keywords:
+                    if keyword in context_lower:
+                        score += 0.3  # Boost based on conversation context
+            
+            intent_scores[intent] = score
+        
+        # Find the intent with the highest score
+        if intent_scores:
+            best_intent = max(intent_scores.items(), key=lambda x: x[1])
+            if best_intent[1] > 0:
+                return best_intent[0]
+        
+        # Default intent
+        return 'search'
+    
+    def extract_entities_and_filters(self, query: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """
+        Enhanced entity and filter extraction from natural language query
+        
+        Args:
+            query: Natural language query
+            
+        Returns:
+            Tuple of (entities_dict, filters_dict)
+        """
+        entities = {}
+        filters = {}
+        
+        # Use NER model if available
+        if self.ner_pipeline:
+            try:
+                ner_results = self.ner_pipeline(query)
+                for entity in ner_results:
+                    if entity['entity_group'] == 'PER':
+                        entities['recipient'] = entity['word']
+                    elif entity['entity_group'] == 'ORG':
+                        # Might be a LEGO theme
+                        entities['potential_theme'] = entity['word']
+            except Exception as e:
+                logger.warning(f"NER extraction failed: {e}")
+        
+        # Rule-based extraction for LEGO-specific terms
+        query_lower = query.lower()
+        
+        # Extract themes with expanded keywords
+        lego_themes = {
+            'star wars': ['star wars', 'starwars', 'jedi', 'sith', 'vader', 'millennium falcon', 'space', 'spaceship', 'galaxy'],
+            'harry potter': ['harry potter', 'hogwarts', 'wizarding', 'hermione', 'dumbledore'],
+            'technic': ['technic', 'mechanical', 'gears', 'motors', 'pneumatic', 'vehicles', 'cars', 'trucks', 'motorized'],
+            'city': ['city', 'police', 'fire department', 'ambulance', 'train'],
+            'creator': ['creator', '3-in-1', 'modular', 'expert', 'vehicles'],
+            'friends': ['friends', 'olivia', 'emma', 'mia', 'heartlake'],
+            'ninjago': ['ninjago', 'ninja', 'lloyd', 'kai', 'spinjitzu'],
+            'architecture': ['architecture', 'landmark', 'building', 'skyline', 'buildings'],
+            'ideas': ['ideas', 'fan-designed', 'community'],
+            'castle': ['castle', 'medieval', 'knight', 'dragon', 'buildings']
+        }
+        
+        detected_themes = []
+        for theme, keywords in lego_themes.items():
+            if any(keyword in query_lower for keyword in keywords):
+                detected_themes.append(theme.title())
+        
+        if detected_themes:
+            filters['themes'] = detected_themes
+        
+        # Extract interest categories
+        interest_categories = {
+            'space': ['space', 'spaceship', 'galaxy', 'astronaut', 'rocket', 'sci-fi'],
+            'vehicles': ['car', 'truck', 'vehicle', 'motorized', 'motor', 'driving'],
+            'buildings': ['building', 'house', 'castle', 'architecture', 'construction'],
+            'action': ['action', 'battle', 'fight', 'adventure', 'hero'],
+            'animals': ['animal', 'pet', 'zoo', 'wildlife', 'creature']
+        }
+        
+        for category, keywords in interest_categories.items():
+            if any(keyword in query_lower for keyword in keywords):
+                entities['interest_category'] = category
+                break
+        
+        # Extract piece count with ranges
+        piece_patterns = [
+            r'(\d+)\s*(?:to|[-–])\s*(\d+)\s*(?:pieces?|parts?)',  # Range like "1000 to 2000 pieces"
+            r'between\s*(\d+)\s*and\s*(\d+)\s*(?:pieces?|parts?)',  # "between 1000 and 2000 pieces"
+            r'over\s*(\d+)\s*(?:pieces?|parts?)',  # "over 1000 pieces"
+            r'under\s*(\d+)\s*(?:pieces?|parts?)',  # "under 500 pieces"
+            r'(\d+)\s*(?:pieces?|parts?)'  # Just "500 pieces"
+        ]
+        
+        for i, pattern in enumerate(piece_patterns):
+            piece_match = re.search(pattern, query_lower)
+            if piece_match:
+                if i == 0 or i == 1:  # Range patterns
+                    min_pieces = int(piece_match.group(1))
+                    max_pieces = int(piece_match.group(2))
+                    filters['min_pieces'] = min_pieces
+                    filters['max_pieces'] = max_pieces
+                elif i == 2:  # "over X pieces"
+                    min_pieces = int(piece_match.group(1))
+                    filters['min_pieces'] = min_pieces - 100  # Allow some flexibility
+                    filters['max_pieces'] = min_pieces + 1000  # Upper bound
+                elif i == 3:  # "under X pieces"
+                    max_pieces = int(piece_match.group(1))
+                    filters['min_pieces'] = max(1, max_pieces - 400)  # Lower bound
+                    filters['max_pieces'] = max_pieces + 100  # Allow some flexibility
+                else:  # Single number
+                    piece_count = int(piece_match.group(1))
+                    # Interpret as target piece count with flexibility
+                    filters['min_pieces'] = max(1, piece_count - 100)
+                    filters['max_pieces'] = piece_count + 100
+                break
+        
+        # Extract age information
+        age_patterns = [
+            r'(\d+)[\s-]*(?:year[\s-]*old|yo|years?)',
+            r'age[\s]*(\d+)',
+            r'for[\s]*(\d+)[\s]*year',
+            r'(\d+)(?:st|nd|rd|th)[\s]*birthday',  # "6th birthday"
+            r'(\d+)[\s]*(?:st|nd|rd|th)[\s]*(?:birthday|bday)'  # "6 th birthday"
+        ]
+        
+        for pattern in age_patterns:
+            age_match = re.search(pattern, query_lower)
+            if age_match:
+                age = int(age_match.group(1))
+                filters['min_age'] = max(1, age - 2)
+                filters['max_age'] = age + 5
+                entities['age'] = age
+                break
+        
+        # Extract recipient information
+        recipient_patterns = {
+            'nephew': ['nephew'],
+            'niece': ['niece'],
+            'son': ['son', 'boy'],
+            'daughter': ['daughter', 'girl'],
+            'child': ['child', 'kid'],
+            'adult': ['adult', 'grown-up', 'myself', 'me'],
+            'teenager': ['teenager', 'teen']
+        }
+        
+        for recipient, keywords in recipient_patterns.items():
+            if any(keyword in query_lower for keyword in keywords):
+                entities['recipient'] = recipient
+                break
+        
+        # Extract occasion
+        occasions = ['birthday', 'christmas', 'holiday', 'gift', 'present']
+        for occasion in occasions:
+            if occasion in query_lower:
+                entities['occasion'] = occasion
+                break
+        
+        # Extract experience level
+        experience_levels = {
+            'beginner': ['beginner', 'starter', 'new', 'first time', 'easy'],
+            'intermediate': ['intermediate', 'moderate', 'some experience'],
+            'expert': ['expert', 'advanced', 'experienced', 'master', 'professional']
+        }
+        
+        for level, keywords in experience_levels.items():
+            if any(keyword in query_lower for keyword in keywords):
+                entities['experience_level'] = level
+                break
+        
+        # Extract building preferences
+        building_preferences = {
+            'challenging': ['challenging', 'difficult', 'complex'],
+            'detailed': ['detailed', 'intricate', 'precise'],
+            'quick_build': ['quick', 'fast', 'simple', 'weekend']
+        }
+        
+        for preference, keywords in building_preferences.items():
+            if any(keyword in query_lower for keyword in keywords):
+                entities['building_preference'] = preference
+                break
+        
+        # Extract special features
+        special_features = []
+        feature_keywords = {
+            'minifigures': ['minifigure', 'minifig', 'figure', 'character'],
+            'motorized': ['motorized', 'motor', 'powered', 'electric'],
+            'lights': ['light', 'led', 'illuminated', 'glowing'],
+            'sound': ['sound', 'music', 'audio'],
+            'remote_control': ['remote control', 'rc', 'controllable']
+        }
+        
+        for feature, keywords in feature_keywords.items():
+            if any(keyword in query_lower for keyword in keywords):
+                special_features.append(feature)
+        
+        if special_features:
+            entities['special_features'] = special_features
+        
+        # Extract time constraints
+        time_constraints = {
+            'weekend_project': ['weekend', 'saturday', 'sunday', 'quick build'],
+            'vacation_project': ['vacation', 'holiday break', 'long project'],
+            'daily_build': ['daily', 'bit by bit', 'gradually']
+        }
+        
+        for constraint, keywords in time_constraints.items():
+            if any(keyword in query_lower for keyword in keywords):
+                entities['time_constraint'] = constraint
+                break
+        
+        # Extract budget/price information
+        price_patterns = [
+            r'under[\s]*\$?(\d+)',
+            r'less than[\s]*\$?(\d+)',
+            r'budget[\s]*\$?(\d+)',
+            r'\$(\d+)[\s]*(?:or less|max|maximum)'
+        ]
+        
+        for pattern in price_patterns:
+            price_match = re.search(pattern, query_lower)
+            if price_match:
+                max_price = float(price_match.group(1))
+                filters['price_range'] = [0, max_price]
+                entities['budget'] = max_price
+                break
+        
+        # Extract complexity level (enhanced)
+        if any(word in query_lower for word in ['complex', 'challenging', 'detailed', 'advanced', 'expert', 'difficult']):
+            entities['complexity'] = 'advanced'
+        elif any(word in query_lower for word in ['easy', 'simple', 'beginner', 'starter', 'basic']):
+            entities['complexity'] = 'beginner'
+        else:
+            entities['complexity'] = 'intermediate'
+        
+        return entities, filters
+    
+    def generate_conversational_response(self, query: str, context: str = "", 
+                                       recommendations: List[Dict] = None) -> str:
+        """
+        Generate a conversational response using HuggingFace models
+        
+        Args:
+            query: User query
+            context: Conversation context
+            recommendations: List of LEGO set recommendations
+            
+        Returns:
+            Generated response string
+        """
+        # Create a prompt for response generation
+        prompt_parts = []
+        
+        if context:
+            prompt_parts.append(f"Context: {context}")
+        
+        prompt_parts.append(f"User: {query}")
+        
+        if recommendations:
+            prompt_parts.append("Recommendations available:")
+            for i, rec in enumerate(recommendations[:3], 1):
+                prompt_parts.append(f"{i}. {rec.get('name', 'Unknown')} - {rec.get('theme', 'N/A')}")
+        
+        prompt = "\n".join(prompt_parts)
+        prompt += "\nAssistant: I'd be happy to help you find the perfect LEGO set! "
+        
+        # Use text generation model if available
+        if self.text_generator:
+            try:
+                # Generate response
+                response = self.text_generator(
+                    prompt,
+                    max_length=len(prompt.split()) + 50,
+                    num_return_sequences=1,
+                    temperature=0.7,
+                    do_sample=True,
+                    pad_token_id=50256
+                )
+                
+                generated_text = response[0]['generated_text']
+                # Extract only the assistant's response
+                assistant_response = generated_text.split("Assistant:")[-1].strip()
+                
+                # Clean up the response
+                assistant_response = assistant_response.split('\n')[0]  # Take first line
+                assistant_response = assistant_response[:200]  # Limit length
+                
+                return assistant_response
+            
+            except Exception as e:
+                logger.warning(f"Text generation failed: {e}")
+        
+        # Fallback to template-based responses
+        return self._generate_template_response(query, recommendations)
+    
+    def _generate_template_response(self, query: str, recommendations: List[Dict] = None) -> str:
+        """Generate template-based responses as fallback"""
+        query_lower = query.lower()
+        
+        response_templates = {
+            'gift': "I found some great LEGO sets that would make perfect gifts! ",
+            'star wars': "Here are some amazing Star Wars LEGO sets! ",
+            'beginner': "These sets are perfect for beginners! ",
+            'advanced': "Here are some challenging sets for experienced builders! ",
+            'budget': "I found some affordable options within your budget! ",
+            'similar': "Based on your interests, here are some similar sets! ",
+        }
+        
+        # Find appropriate template
+        response = "Here are some LEGO sets I think you'll love! "
+        for keyword, template in response_templates.items():
+            if keyword in query_lower:
+                response = template
+                break
+        
+        # Add recommendation summary
+        if recommendations:
+            themes = list(set(rec.get('theme', 'N/A') for rec in recommendations[:3]))
+            if themes and themes[0] != 'N/A':
+                response += f"I've found sets from {', '.join(themes)} themes. "
+        
+        return response
+    
+    def process_natural_language_query(self, query: str, user_id: Optional[int] = None,
+                                     use_conversation_context: bool = True) -> Dict[str, Any]:
+        """
+        Process a natural language query and return structured results
+        
+        Args:
+            query: Natural language query
+            user_id: Optional user ID for personalization
+            use_conversation_context: Whether to use conversation context
+            
+        Returns:
+            Dictionary with processed query results
+        """
+        # Get conversation context
+        conversation_context = ""
+        if use_conversation_context:
+            conversation_context = self.conversation_memory.get_recent_context()
+        
+        # Classify intent
+        intent = self.classify_intent(query, conversation_context)
+        
+        # Extract entities and filters
+        entities, filters = self.extract_entities_and_filters(query)
+        
+        # Calculate confidence score
+        confidence = self._calculate_confidence(query, intent, entities, filters)
+        
+        # Create semantic query for vector search
+        semantic_query = self._create_semantic_query(query, entities, filters)
+        
+        result = {
+            'query': query,
+            'intent': intent,
+            'entities': entities,
+            'filters': filters,
+            'semantic_query': semantic_query,
+            'confidence': confidence,
+            'conversation_context': conversation_context
+        }
+        
+        return result
+    
+    def _calculate_confidence(self, query: str, intent: str, entities: Dict, filters: Dict) -> float:
+        """Calculate confidence score for the query processing"""
+        confidence = 0.5  # Base confidence
+        
+        # Boost confidence based on extracted information
+        if entities:
+            confidence += len(entities) * 0.1
+        
+        if filters:
+            confidence += len(filters) * 0.15
+        
+        # Boost confidence for clear intent indicators
+        if intent != 'search':  # More specific intent
+            confidence += 0.2
+        
+        # Boost confidence for longer, more descriptive queries
+        if len(query.split()) > 5:
+            confidence += 0.1
+        
+        return min(confidence, 1.0)  # Cap at 1.0
+    
+    def _create_semantic_query(self, query: str, entities: Dict, filters: Dict) -> str:
+        """Create an enhanced semantic query for vector search"""
+        semantic_parts = [query]
+        
+        # Add entity information
+        if entities.get('recipient'):
+            semantic_parts.append(f"for {entities['recipient']}")
+        
+        if entities.get('occasion'):
+            semantic_parts.append(f"{entities['occasion']} gift")
+        
+        if entities.get('complexity'):
+            semantic_parts.append(f"{entities['complexity']} difficulty")
+        
+        # Add filter information
+        if filters.get('themes'):
+            semantic_parts.extend(filters['themes'])
+        
+        return " ".join(semantic_parts)
+    
+    def search_recommendations(self, processed_query: Dict[str, Any], 
+                             top_k: int = 10) -> List[Dict[str, Any]]:
+        """
+        Search for LEGO set recommendations based on processed query
+        
+        Args:
+            processed_query: Result from process_natural_language_query
+            top_k: Number of recommendations to return
+            
+        Returns:
+            List of LEGO set recommendations
+        """
+        if not self.embedding_model:
+            logger.warning("Embedding model not available, returning empty results")
+            return []
+        
+        try:
+            # Get semantic query embeddings
+            semantic_query = processed_query['semantic_query']
+            query_embedding = self.embedding_model.encode([semantic_query])
+            
+            # Query the vector database
+            results = self._query_vector_database(query_embedding[0], top_k)
+            
+            # Apply filters
+            filtered_results = self._apply_filters(results, processed_query['filters'])
+            
+            # Add confidence and intent to results
+            for result in filtered_results:
+                result['confidence'] = processed_query['confidence']
+                result['intent'] = processed_query['intent']
+            
+            return filtered_results[:top_k]
+        
+        except Exception as e:
+            logger.error(f"Search failed: {e}")
+            return []
+    
+    def _query_vector_database(self, query_embedding: np.ndarray, top_k: int) -> List[Dict]:
+        """Query the vector database for similar LEGO sets"""
+        # This would interface with your PostgreSQL pgvector database
+        # For now, return a placeholder
+        # TODO: Implement actual vector search
+        return []
+    
+    def _apply_filters(self, results: List[Dict], filters: Dict[str, Any]) -> List[Dict]:
+        """Apply filters to search results"""
+        if not filters:
+            return results
+        
+        filtered = []
+        for result in results:
+            include = True
+            
+            # Theme filter
+            if filters.get('themes') and result.get('theme'):
+                if result['theme'] not in filters['themes']:
+                    include = False
+            
+            # Piece count filter
+            if filters.get('min_pieces') and result.get('num_parts'):
+                if result['num_parts'] < filters['min_pieces']:
+                    include = False
+            
+            if filters.get('max_pieces') and result.get('num_parts'):
+                if result['num_parts'] > filters['max_pieces']:
+                    include = False
+            
+            # Age filter
+            if filters.get('min_age') and result.get('min_age'):
+                if result['min_age'] > filters['min_age']:
+                    include = False
+            
+            if filters.get('max_age') and result.get('max_age'):
+                if result['max_age'] < filters['max_age']:
+                    include = False
+            
+            if include:
+                filtered.append(result)
+        
+        return filtered
+    
+    def add_conversation_interaction(self, user_message: str, assistant_response: str,
+                                   recommendations: List[Dict] = None):
+        """Add a conversation interaction to memory"""
+        context = {}
+        if recommendations:
+            context['recommendation_count'] = len(recommendations)
+            context['themes'] = list(set(r.get('theme', '') for r in recommendations))
+        
+        self.conversation_memory.add_interaction(user_message, assistant_response, context)
+        
+        # Update user context
+        self.user_context['previous_searches'].append({
+            'query': user_message,
+            'timestamp': datetime.now().isoformat(),
+            'response_summary': assistant_response[:100] + "..." if len(assistant_response) > 100 else assistant_response
+        })
+        
+        # Keep only recent searches
+        if len(self.user_context['previous_searches']) > 20:
+            self.user_context['previous_searches'] = self.user_context['previous_searches'][-20:]
+    
+    def get_conversation_context(self) -> ConversationContext:
+        """Get current conversation context"""
+        recent_queries = [search['query'] for search in self.user_context['previous_searches'][-5:]]
+        conversation_summary = self.conversation_memory.get_conversation_summary()
+        
+        return ConversationContext(
+            user_preferences=self.user_context.get('preferences', {}),
+            previous_recommendations=self.user_context.get('previous_recommendations', []),
+            current_session_queries=recent_queries,
+            follow_up_context={},
+            conversation_summary=conversation_summary
+        )
+    
+    def update_user_preferences(self, preferences: Dict[str, Any]):
+        """Update user preferences based on feedback"""
+        if 'preferences' not in self.user_context:
+            self.user_context['preferences'] = {}
+        
+        self.user_context['preferences'].update(preferences)
+    
+    def record_user_feedback(self, set_num: str, feedback: str, rating: Optional[int] = None):
+        """Record user feedback for learning"""
+        feedback_entry = {
+            'set_num': set_num,
+            'feedback': feedback,
+            'rating': rating,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        if feedback == 'liked':
+            self.user_context['liked_sets'].append(feedback_entry)
+        elif feedback == 'disliked':
+            self.user_context['disliked_sets'].append(feedback_entry)
+        
+        # Learn from feedback
+        self._learn_from_feedback(set_num, feedback)
+    
+    def _learn_from_feedback(self, set_num: str, feedback: str):
+        """Learn user preferences from feedback"""
+        # Query database for set information
+        try:
+            cursor = self.dbconn.cursor()
+            cursor.execute("""
+                SELECT theme_name, num_parts, min_age 
+                FROM sets 
+                WHERE set_num = %s
+            """, (set_num,))
+            
+            result = cursor.fetchone()
+            if result:
+                theme, num_parts, min_age = result
+                
+                # Update theme preferences
+                if 'themes' not in self.user_context['preferences']:
+                    self.user_context['preferences']['themes'] = {}
+                
+                if feedback == 'liked':
+                    self.user_context['preferences']['themes'][theme] = \
+                        self.user_context['preferences']['themes'].get(theme, 0) + 1
+                elif feedback == 'disliked':
+                    self.user_context['preferences']['themes'][theme] = \
+                        self.user_context['preferences']['themes'].get(theme, 0) - 1
+            
+            cursor.close()
+        except Exception as e:
+            logger.error(f"Failed to learn from feedback: {e}")
+    
+    def clear_conversation_memory(self):
+        """Clear conversation memory and reset user context"""
+        self.conversation_memory.clear()
+        self.user_context = {
+            'preferences': {},
+            'previous_searches': [],
+            'liked_sets': [],
+            'disliked_sets': [],
+            'conversation_session': datetime.now().isoformat()
+        }
+    
+    def get_health_status(self) -> Dict[str, Any]:
+        """Get health status of the HuggingFace NLP system"""
+        status = {
+            'nlp_system': 'healthy',
+            'models_loaded': {
+                'embedding_model': self.embedding_model is not None,
+                'conversation_model': self.conversation_model is not None,
+                'ner_pipeline': self.ner_pipeline is not None,
+                'text_generator': self.text_generator is not None
+            },
+            'device': self.device,
+            'quantization_enabled': self.use_quantization,
+            'conversation_memory': len(self.conversation_memory.conversations),
+            'user_preferences': len(self.user_context.get('preferences', {}))
+        }
+        
+        # Check if at least basic functionality is available
+        if not any(status['models_loaded'].values()):
+            status['nlp_system'] = 'degraded'
+        
+        return status

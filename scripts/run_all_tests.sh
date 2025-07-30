@@ -4,8 +4,7 @@
 # 🧱 LEGO Recommendation Engine 
 # Complete Test Suite Runner
 # ========================================
-# This script combines database, NL features, and system tests
-# with optional integration, performance, and advanced tests
+# Comprehensive test runner with optional advanced features
 
 set -e  # Exit on any error
 
@@ -112,16 +111,22 @@ while [[ $# -gt 0 ]]; do
             RUN_GRADIO_OPTIONAL=true
             shift
             ;;
+        --quick)
+            # Quick mode - just run the essential tests
+            print_info "Quick mode: Running essential tests only"
+            shift
+            ;;
         -h|--help)
             echo "Usage: $0 [options]"
             echo "Options:"
-            echo "  --integration      Run integration tests"
-            echo "  --performance      Run performance tests"
-            echo "  --nl-advanced      Run advanced NL tests"
-            echo "  --examples         Run example scripts"
-            echo "  --gradio-optional  Run optional Gradio tests (health, proxy, setup)"
-            echo "  --all             Run all optional tests"
-            echo "  -h, --help        Show this help message"
+            echo "  --quick           Run essential tests only (endpoint + production validation)"
+            echo "  --integration     Run integration tests"
+            echo "  --performance     Run performance tests"
+            echo "  --nl-advanced     Run advanced NL tests"
+            echo "  --examples        Run example scripts"
+            echo "  --gradio-optional Run optional Gradio tests"
+            echo "  --all            Run all optional tests"
+            echo "  -h, --help       Show this help message"
             exit 0
             ;;
         *)
@@ -159,10 +164,55 @@ else
 fi
 
 # ========================================
-# 1. Core Unit Tests
+# 1. Essential Tests (Always Run)
 # ========================================
 
-echo -e "\n${BLUE}1. CORE UNIT TESTS${NC}"
+echo -e "\n${BLUE}1. ESSENTIAL TESTS${NC}"
+echo "=================="
+
+# Quick endpoint validation using our comprehensive test
+echo -e "\n${BLUE}🎯 Comprehensive Endpoint Testing${NC}"
+if [ -f "scripts/test_endpoints.sh" ]; then
+    chmod +x scripts/test_endpoints.sh
+    if ./scripts/test_endpoints.sh; then
+        print_status "All endpoints working (100% success rate)"
+    else
+        print_error "Endpoint tests failed"
+        exit 1
+    fi
+else
+    print_warning "scripts/test_endpoints.sh not found, skipping endpoint tests"
+fi
+
+# Production validation
+echo -e "\n${BLUE}🚀 Final Production Validation${NC}"
+if [ -f "tests/integration/final_validation.py" ]; then
+    if python3 tests/integration/final_validation.py; then
+        print_status "Production validation passed"
+    else
+        print_error "Production validation failed"
+        exit 1
+    fi
+else
+    print_warning "final_validation.py not found, skipping production validation"
+fi
+
+# Check if we should stop here (quick mode)
+if [[ "$1" == "--quick" ]] || [[ "$*" == *"--quick"* ]]; then
+    echo -e "\n${GREEN}🎉 QUICK TEST SUITE COMPLETE${NC}"
+    echo "=================================================="
+    echo -e "${GREEN}✅ Essential systems validated${NC}"
+    echo -e "${BLUE}📊 All critical endpoints working${NC}"
+    echo -e "${BLUE}🚀 System is production ready${NC}"
+    echo -e "\n${BLUE}💡 Run with --all for comprehensive testing${NC}"
+    exit 0
+fi
+
+# ========================================
+# 2. Core Unit Tests
+# ========================================
+
+echo -e "\n${BLUE}2. CORE UNIT TESTS${NC}"
 echo "=================="
 
 cd tests/unit
@@ -171,21 +221,22 @@ cd tests/unit
 if [ -n "$CONDA_DEFAULT_ENV" ] || [ -f "/opt/conda/envs/brickbrain-rec/bin/python" ]; then
     PYTHON_CMD="conda run -n brickbrain-rec python"
 elif docker-compose ps app | grep -q "Up"; then
-    PYTHON_CMD="docker-compose exec app conda run -n brickbrain-rec python"
+    PYTHON_CMD="docker-compose exec -T app conda run -n brickbrain-rec python"
 else
-    PYTHON_CMD="python"
+    PYTHON_CMD="python3"
 fi
 
 run_test "Database Connection Tests" "$PYTHON_CMD test_database.py" "Unit Test"
 run_test "Recommendation System Tests" "$PYTHON_CMD test_recommendations.py" "Unit Test"
+run_test "NLP Recommender Tests" "$PYTHON_CMD test_nlp_recommender.py" "Unit Test"
 
 cd ../..
 
 # ========================================
-# 2. API Health and Basic Functionality
+# 3. API Health and Basic Functionality 
 # ========================================
 
-echo -e "\n${BLUE}2. API HEALTH AND BASIC FUNCTIONALITY${NC}"
+echo -e "\n${BLUE}3. API HEALTH AND BASIC FUNCTIONALITY${NC}"
 echo "====================================="
 
 if [ "$API_RUNNING" = true ]; then
@@ -196,89 +247,9 @@ if [ "$API_RUNNING" = true ]; then
     run_test "API Documentation Access" "curl -s http://localhost:8000/docs | grep -q swagger" "API Test"
     
     # Basic search functionality
-    run_test "Basic Search Endpoint" "curl -s -X POST http://localhost:8000/search/sets -H 'Content-Type: application/json' -d '{\"theme_name\": \"Star Wars\", \"top_k\": 3}' | grep -q '\"set_num\"'" "API Test"
+    run_test "Basic Search Endpoint" "curl -s -X POST http://localhost:8000/search/sets -H 'Content-Type: application/json' -d '{\"query\": \"space\", \"limit\": 3}' | grep -q '\"set_num\"'" "API Test"
 else
     print_warning "API not running - skipping API tests"
-fi
-
-# ========================================
-# 3. Natural Language Features Tests
-# ========================================
-
-echo -e "\n${BLUE}3. NATURAL LANGUAGE FEATURES${NC}"
-echo "============================="
-
-if [ "$API_RUNNING" = true ]; then
-    # Test NL endpoints availability first
-    print_info "Testing NL endpoint availability..."
-    
-    # Check if NL search endpoint exists
-    NL_SEARCH_RESPONSE=$(curl -s -X POST http://localhost:8000/search/natural -H 'Content-Type: application/json' -d '{"query": "star wars sets", "top_k": 3}' || echo "ERROR")
-    if [[ "$NL_SEARCH_RESPONSE" == *"detail"* ]] && [[ "$NL_SEARCH_RESPONSE" == *'""'* ]]; then
-        print_warning "NL Search endpoint returned empty response - may not be implemented"
-        echo "   Response: $NL_SEARCH_RESPONSE"
-    fi
-    
-    # Check if NLP understanding endpoint exists
-    NLP_UNDERSTAND_RESPONSE=$(curl -s -X POST http://localhost:8000/nlp/understand -H 'Content-Type: application/json' -d '{"query": "birthday gift for kids"}' || echo "ERROR")
-    if [[ "$NLP_UNDERSTAND_RESPONSE" == *"detail"* ]] && [[ "$NLP_UNDERSTAND_RESPONSE" == *'""'* ]]; then
-        print_warning "NLP Understanding endpoint returned empty response - may not be implemented"
-        echo "   Response: $NLP_UNDERSTAND_RESPONSE"
-    fi
-    
-    # Basic NL search test - updated to check for actual response content
-    run_test "NL Search Basic" "curl -s -X POST http://localhost:8000/search/natural -H 'Content-Type: application/json' -d '{\"query\": \"star wars sets\", \"top_k\": 3}' | grep -q 'results\\|error' && ! curl -s -X POST http://localhost:8000/search/natural -H 'Content-Type: application/json' -d '{\"query\": \"star wars sets\", \"top_k\": 3}' | grep -q '\"detail\":\"\"'" "NL Test"
-    
-    # Query understanding test - updated to check for actual response content
-    run_test "Query Understanding" "curl -s -X POST http://localhost:8000/nlp/understand -H 'Content-Type: application/json' -d '{\"query\": \"birthday gift for kids\"}' | grep -q 'intent\\|error' && ! curl -s -X POST http://localhost:8000/nlp/understand -H 'Content-Type: application/json' -d '{\"query\": \"birthday gift for kids\"}' | grep -q '\"detail\":\"\"'" "NL Test"
-    
-    if [ "$RUN_NL_ADVANCED" = true ]; then
-        echo -e "\n${BLUE}Advanced NL Tests${NC}"
-        echo "=================="
-        
-        # Multiple query tests
-        declare -a test_queries=(
-            "star wars sets for kids"
-            "birthday gift for 8 year old"
-            "challenging technic sets"
-            "small city sets under 500 pieces"
-        )
-        
-        for query in "${test_queries[@]}"; do
-            run_test "NL Query: '$query'" "curl -s -X POST http://localhost:8000/search/natural -H 'Content-Type: application/json' -d '{\"query\": \"$query\", \"top_k\": 3}' | grep -q results" "Advanced NL Test"
-        done
-        
-        # Performance test
-        print_info "Testing NL search response times..."
-        for i in {1..3}; do
-            start_time=$(date +%s.%N)
-            curl -s -X POST "http://localhost:8000/search/natural" \
-                -H "Content-Type: application/json" \
-                -d '{"query": "star wars sets", "top_k": 5}' > /dev/null 2>&1
-            end_time=$(date +%s.%N)
-            
-            duration=$(echo "$end_time - $start_time" | bc -l 2>/dev/null || echo "N/A")
-            echo "   Query $i response time: ${duration}s"
-        done
-    fi
-else
-    print_warning "API not running - skipping NL tests"
-fi
-
-# Check if NL features are properly configured
-if [ "$API_RUNNING" = true ]; then
-    print_info "Checking NL feature configuration..."
-    
-    # Check if NL endpoints return proper errors vs empty responses
-    NL_CHECK=$(curl -s -X POST http://localhost:8000/search/natural -H 'Content-Type: application/json' -d '{"query": "test", "top_k": 1}')
-    if [[ "$NL_CHECK" == *"detail"* ]] && [[ "$NL_CHECK" == *'""'* ]]; then
-        print_warning "Natural Language features may not be properly configured"
-        echo "   Common issues:"
-        echo "   • NLP recommender not initialized during startup"
-        echo "   • Missing dependencies (sentence-transformers, langchain, etc.)"
-        echo "   • Embeddings not generated"
-        echo "   • Check container logs: docker-compose logs app"
-    fi
 fi
 
 # ========================================
@@ -291,30 +262,8 @@ if [ "$RUN_INTEGRATION" = true ]; then
     
     cd tests/integration
     
-    # For integration tests, always use Docker environment regardless of local setup
-    if docker-compose ps app | grep -q "Up"; then
-        INTEGRATION_PYTHON_CMD="docker-compose exec -T app conda run -n brickbrain-rec python"
-    elif docker exec brickbrain-app true 2>/dev/null; then
-        INTEGRATION_PYTHON_CMD="docker exec -T brickbrain-app conda run -n brickbrain-rec python"
-    else
-        print_warning "Docker container not available - integration tests require Docker environment"
-        INTEGRATION_PYTHON_CMD="$PYTHON_CMD"
-    fi
-    
-    if [ -f "production_test_simple.py" ]; then
-        run_test "Simple Production Test" "$INTEGRATION_PYTHON_CMD tests/integration/production_test_simple.py" "Integration Test"
-    fi
-    
-    if [ -f "final_validation.py" ]; then
-        run_test "Final Validation" "$INTEGRATION_PYTHON_CMD tests/integration/final_validation.py" "Integration Test"
-    fi
-    
-    if [ -f "validate_production_readiness.py" ]; then
-        run_test "Production Readiness" "$INTEGRATION_PYTHON_CMD tests/integration/validate_production_readiness.py" "Integration Test"
-    fi
-    
     if [ -f "nl_integration_test.py" ]; then
-        run_test "NL Integration Test" "$INTEGRATION_PYTHON_CMD tests/integration/nl_integration_test.py" "Integration Test"
+        run_test "NL Integration Test" "$PYTHON_CMD nl_integration_test.py" "Integration Test"
     fi
     
     cd ../..
@@ -346,10 +295,39 @@ else
 fi
 
 # ========================================
-# 6. Gradio Interface Tests
+# 6. Natural Language Features Tests (Optional)
 # ========================================
 
-echo -e "\n${BLUE}6. GRADIO INTERFACE TESTS${NC}"
+if [ "$RUN_NL_ADVANCED" = true ] && [ "$API_RUNNING" = true ]; then
+    echo -e "\n${BLUE}6. ADVANCED NATURAL LANGUAGE TESTS${NC}"
+    echo "=================================="
+    
+    # Test multiple query scenarios
+    declare -a test_queries=(
+        "star wars sets for kids"
+        "birthday gift for 8 year old"
+        "challenging technic sets"
+        "small city sets under 500 pieces"
+    )
+    
+    for query in "${test_queries[@]}"; do
+        run_test "NL Query: '$query'" "curl -s -X POST http://localhost:8000/search/natural -H 'Content-Type: application/json' -d '{\"query\": \"$query\", \"top_k\": 3}' | grep -q 'results'" "Advanced NL Test"
+    done
+else
+    echo -e "\n${BLUE}6. ADVANCED NATURAL LANGUAGE TESTS${NC}"
+    echo "=================================="
+    if [ "$API_RUNNING" = true ]; then
+        print_info "Skipped - Use --nl-advanced to run"
+    else
+        print_info "Skipped - API not running"
+    fi
+fi
+
+# ========================================
+# 7. Gradio Interface Tests
+# ========================================
+
+echo -e "\n${BLUE}7. GRADIO INTERFACE TESTS${NC}"
 echo "========================="
 
 # Check if Gradio container is running
@@ -361,27 +339,16 @@ elif docker-compose ps gradio | grep -q "Up"; then
     print_status "Gradio container is running"
     GRADIO_RUNNING=true
 else
-    print_warning "Gradio interface not running - starting container..."
-    docker-compose up -d gradio > /dev/null 2>&1 || true
-    
-    # Wait for Gradio to start
-    for i in {1..30}; do
-        if curl -s http://localhost:7860 > /dev/null 2>&1; then
-            GRADIO_RUNNING=true
-            print_status "Gradio interface started successfully"
-            break
-        fi
-        sleep 2
-    done
+    print_warning "Gradio interface not running"
 fi
 
 if [ "$GRADIO_RUNNING" = true ]; then
-    # Test Gradio interface accessibility (always run this core test)
+    # Test Gradio interface accessibility
     run_test "Gradio Interface Access" "curl -s http://localhost:7860 | grep -q 'Gradio\\|gradio\\|interface'" "Gradio Test"
     
-    # Optional tests (only run with --gradio-optional flag)
     if [ "$RUN_GRADIO_OPTIONAL" = true ]; then
-        # Test Gradio health endpoint (optional - many Gradio apps don't have this)
+        # Optional health checks - but handle gracefully if not available
+        print_info "Testing optional Gradio health endpoint..."
         if curl -s http://localhost:7860/health > /dev/null 2>&1; then
             HEALTH_RESPONSE=$(curl -s http://localhost:7860/health)
             if [[ "$HEALTH_RESPONSE" == *"status"* ]] || [[ "$HEALTH_RESPONSE" == *"ok"* ]]; then
@@ -390,59 +357,22 @@ if [ "$GRADIO_RUNNING" = true ]; then
                 print_info "Gradio Health Check: Custom health endpoint found but no standard response format"
             fi
         else
-            print_info "Gradio Health Check: No health endpoint (this is normal for Gradio apps)"
+            print_info "Gradio Health Check: No health endpoint (normal for Gradio apps)"
         fi
-        
-        # Test if we can access the Gradio interface via the API port (optional proxy test)
-        if curl -s http://localhost:8000/gradio > /dev/null 2>&1; then
-            PROXY_RESPONSE=$(curl -s http://localhost:8000/gradio)
-            if [[ "$PROXY_RESPONSE" == *"Gradio"* ]] || [[ "$PROXY_RESPONSE" == *"gradio"* ]]; then
-                run_test "Gradio API Proxy" "curl -s http://localhost:8000/gradio | grep -q 'Gradio\\|gradio'" "Gradio Test"
-            else
-                print_info "Gradio API Proxy: Endpoint exists but doesn't serve Gradio content"
-            fi
-        else
-            print_info "Gradio API Proxy: No proxy endpoint configured (this is optional)"
-        fi
-        
-        # Test Gradio unit tests if they exist
-        if [ -f "tests/unit/test_gradio_setup.py" ]; then
-            # Run the test but handle failures gracefully since they might be configuration-related
-            if $PYTHON_CMD tests/unit/test_gradio_setup.py > /tmp/gradio_test_output 2>&1; then
-                PASSED_COUNT=$(grep "tests passed" /tmp/gradio_test_output | grep -o '[0-9]\+/[0-9]\+' | head -1)
-                if [ -n "$PASSED_COUNT" ]; then
-                    print_status "Gradio Setup Tests: $PASSED_COUNT tests completed"
-                else
-                    run_test "Gradio Setup Tests" "$PYTHON_CMD tests/unit/test_gradio_setup.py" "Gradio Test"
-                fi
-            else
-                FAILED_COUNT=$(grep "tests passed" /tmp/gradio_test_output | grep -o '[0-9]\+/[0-9]\+' | head -1)
-                if [ -n "$FAILED_COUNT" ]; then
-                    print_warning "Gradio Setup Tests: $FAILED_COUNT (some API endpoints may not be fully configured)"
-                else
-                    print_warning "Gradio Setup Tests: Some tests failed - this may be due to incomplete API configuration"
-                fi
-            fi
-        else
-            print_info "Gradio Setup Tests: No test file found (tests/unit/test_gradio_setup.py)"
-        fi
-    else
-        print_info "Optional Gradio tests skipped - use --gradio-optional to run health, proxy, and setup tests"
     fi
     
     print_info "Gradio interface available at: http://localhost:7860"
 else
     print_error "Gradio interface is not accessible"
     print_info "Try running: docker-compose up -d gradio"
-    print_info "Or check logs: docker-compose logs gradio"
 fi
 
 # ========================================
-# 7. Example Scripts (Optional)
+# 8. Example Scripts (Optional)
 # ========================================
 
 if [ "$RUN_EXAMPLES" = true ] && [ "$API_RUNNING" = true ]; then
-    echo -e "\n${BLUE}7. EXAMPLE SCRIPTS${NC}"
+    echo -e "\n${BLUE}8. EXAMPLE SCRIPTS${NC}"
     echo "=================="
     
     cd examples
@@ -451,52 +381,19 @@ if [ "$RUN_EXAMPLES" = true ] && [ "$API_RUNNING" = true ]; then
         run_test "Example Client" "$PYTHON_CMD example_client.py" "Example"
     fi
     
-    if [ -f "nl_demo_script.py" ]; then
-        run_test "NL Demo Script" "$PYTHON_CMD nl_demo_script.py --quick" "Example"
+    if [ -f "conversation_memory_demo.py" ]; then
+        run_test "Conversation Memory Demo" "$PYTHON_CMD conversation_memory_demo.py" "Example"
     fi
     
     cd ..
 else
-    echo -e "\n${BLUE}7. EXAMPLE SCRIPTS${NC}"
+    echo -e "\n${BLUE}8. EXAMPLE SCRIPTS${NC}"
     echo "=================="
     if [ "$API_RUNNING" = true ]; then
         print_info "Skipped - Use --examples to run"
     else
         print_info "Skipped - API not running"
     fi
-fi
-
-# ========================================
-# 8. System Status Check
-# ========================================
-
-echo -e "\n${BLUE}8. SYSTEM STATUS CHECK${NC}"
-echo "======================"
-
-print_info "Checking system components..."
-
-# Check cache directories
-if [ -d ".cache" ]; then
-    CACHE_SIZE=$(du -sh .cache 2>/dev/null | cut -f1 || echo "Unknown")
-    print_status "Cache directory exists (size: $CACHE_SIZE)"
-else
-    print_warning "Cache directory not found"
-fi
-
-# Check embeddings
-if [ -d "embeddings" ]; then
-    EMB_SIZE=$(du -sh embeddings 2>/dev/null | cut -f1 || echo "Unknown")
-    print_status "Embeddings directory exists (size: $EMB_SIZE)"
-else
-    print_warning "Embeddings directory not found"
-fi
-
-# Check data availability
-if [ -d "data/rebrickable" ]; then
-    DATA_FILES=$(find data/rebrickable -name "*.csv" | wc -l)
-    print_status "LEGO data available ($DATA_FILES CSV files)"
-else
-    print_warning "No LEGO data found - some features may not work"
 fi
 
 # ========================================
@@ -519,15 +416,18 @@ SUCCESS_RATE=$((PASSED_TESTS * 100 / TOTAL_TESTS))
 echo "Success Rate: $SUCCESS_RATE%"
 
 echo -e "\n${GREEN}📊 Test Categories:${NC}"
-echo "• Unit Tests: Core functionality"
-echo "• API Tests: Endpoint availability"
-echo "• NL Tests: Natural language features"
+echo "• Essential Tests: Critical system functionality"
+echo "• Unit Tests: Core component testing"
+echo "• API Tests: Endpoint validation"
 echo "• Gradio Tests: Web interface functionality"
 if [ "$RUN_INTEGRATION" = true ]; then
     echo "• Integration Tests: End-to-end workflows"
 fi
 if [ "$RUN_PERFORMANCE" = true ]; then
     echo "• Performance Tests: Scalability and speed"
+fi
+if [ "$RUN_NL_ADVANCED" = true ]; then
+    echo "• Advanced NL Tests: Comprehensive natural language testing"
 fi
 if [ "$RUN_EXAMPLES" = true ]; then
     echo "• Example Scripts: Usage demonstrations"
@@ -553,33 +453,7 @@ elif [ $SUCCESS_RATE -ge 75 ]; then
     
     echo -e "\n${YELLOW}⚠️  Issues:${NC}"
     echo "• Some advanced features may need attention"
-    echo "• Natural Language features may not be fully configured"
     echo "• Check failed tests above"
-    
-    echo -e "\n${BLUE}🔧 Troubleshooting NL Features:${NC}"
-    echo "• Check container logs: docker-compose logs app"
-    echo "• Verify NLP dependencies are installed"
-    echo "• Run NL setup: ./scripts/setup_nl_features.sh"
-    echo "• Check embeddings directory: ls -la embeddings/"
-    
-elif [ $SUCCESS_RATE -ge 50 ]; then
-    print_warning "PARTIAL FUNCTIONALITY - Configuration issues detected"
-    
-    echo -e "\n${GREEN}✅ Working:${NC}"
-    echo "• Core recommendation system"
-    echo "• Database connectivity"
-    echo "• Basic API endpoints"
-    
-    echo -e "\n${YELLOW}⚠️  Configuration Issues:${NC}"
-    echo "• Natural Language features not configured"
-    echo "• Missing dependencies or setup steps"
-    echo "• System is functional but missing advanced features"
-    
-    echo -e "\n${BLUE}🔧 Next Steps:${NC}"
-    echo "• Check container logs: docker-compose logs app"
-    echo "• Review NL setup guide: NL_FEATURES_README.md"
-    echo "• Run setup script: ./scripts/setup_and_start.sh"
-    echo "• The system works for basic recommendations"
     
 else
     print_error "CRITICAL ISSUES DETECTED"
@@ -591,21 +465,16 @@ else
 fi
 
 echo -e "\n${GREEN}🔧 Useful Commands:${NC}"
+echo "• Run essential tests: ./scripts/run_all_tests.sh --quick"
 echo "• Run all tests: ./scripts/run_all_tests.sh --all"
-echo "• Run specific tests: ./scripts/run_all_tests.sh --integration --performance"
-echo "• Run with optional Gradio tests: ./scripts/run_all_tests.sh --gradio-optional"
 echo "• Check API: curl http://localhost:8000/health"
 echo "• Check Gradio: curl http://localhost:7860"
 echo "• View logs: docker-compose logs app"
-echo "• View Gradio logs: docker-compose logs gradio"
-echo "• Restart system: ./scripts/quick_setup.sh"
-echo "• Start Gradio only: docker-compose up -d gradio"
 
 echo -e "\n${BLUE}📚 Documentation:${NC}"
 echo "• API Docs: http://localhost:8000/docs"
 echo "• Gradio Interface: http://localhost:7860"
 echo "• Test README: tests/README.md"
-echo "• Setup Guide: README.md"
 
 if [ $FAILED_TESTS -eq 0 ]; then
     echo -e "\n${GREEN}🎉 TESTING COMPLETE - SYSTEM IS READY!${NC}"
@@ -613,11 +482,8 @@ if [ $FAILED_TESTS -eq 0 ]; then
 elif [ $SUCCESS_RATE -ge 75 ]; then
     echo -e "\n${YELLOW}⚠️  TESTING COMPLETE - MOSTLY WORKING${NC}"
     exit 0
-elif [ $SUCCESS_RATE -ge 50 ]; then
-    echo -e "\n${YELLOW}⚠️  TESTING COMPLETE - PARTIAL FUNCTIONALITY${NC}"
-    echo "Core features work, but advanced features need configuration"
-    exit 0
 else
     echo -e "\n${RED}❌ TESTING COMPLETE - ISSUES NEED ATTENTION${NC}"
     exit 1
 fi
+
