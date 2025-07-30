@@ -181,6 +181,19 @@ class HuggingFaceNLPRecommender:
         # Initialize vector database
         self._init_vector_store()
         
+        # Load themes and categories from database
+        self.lego_themes = {}
+        self.theme_hierarchy = {}
+        self.interest_categories = {}
+        self.theme_cache_timestamp = None
+        
+        # Try to load themes from database, fall back to hardcoded if it fails
+        try:
+            self._load_themes_from_database()
+        except Exception as e:
+            logger.warning(f"Failed to load themes from database during initialization: {e}")
+            self._load_fallback_themes()
+        
         # LEGO-specific intents and patterns
         self.intents = {
             'search': ['find', 'search', 'looking for', 'show me', 'want', 'need', 'browse'],
@@ -312,6 +325,456 @@ class HuggingFaceNLPRecommender:
             logger.warning(f"Could not build DB connection string: {e}")
             return "postgresql+psycopg://brickbrain:brickbrain_password@localhost:5432/brickbrain"
     
+    def _load_themes_from_database(self):
+        """Load LEGO themes and build keyword mappings from database"""
+        try:
+            cursor = self.dbconn.cursor(cursor_factory=RealDictCursor)
+            
+            # Get all themes with their hierarchy
+            cursor.execute("""
+                SELECT id, name, parent_id 
+                FROM themes 
+                ORDER BY id
+            """)
+            themes_data = cursor.fetchall()
+            
+            # Build theme hierarchy and keyword mappings
+            self._build_theme_mappings(themes_data)
+            
+            # Build enhanced interest categories based on actual theme data
+            self._build_interest_categories(themes_data)
+            
+            self.theme_cache_timestamp = datetime.now()
+            logger.info(f"Loaded {len(self.lego_themes)} themes from database")
+            
+        except Exception as e:
+            logger.error(f"Failed to load themes from database: {e}")
+            # Fall back to hardcoded themes
+            self._load_fallback_themes()
+    
+    def _build_theme_mappings(self, themes_data: List[Dict]):
+        """Build comprehensive theme keyword mappings"""
+        self.lego_themes = {}
+        self.theme_hierarchy = {}
+        
+        # Create theme hierarchy map
+        theme_id_to_name = {}
+        for theme in themes_data:
+            theme_id_to_name[theme['id']] = theme['name']
+            if theme['parent_id']:
+                self.theme_hierarchy[theme['name']] = theme_id_to_name.get(theme['parent_id'])
+        
+        # Enhanced keyword mappings based on actual theme names
+        theme_keywords = {}
+        
+        for theme in themes_data:
+            theme_name = theme['name'].lower()
+            keywords = []
+            
+            # Always include the exact theme name
+            keywords.append(theme_name)
+            keywords.append(theme_name.replace(' ', ''))  # Remove spaces
+            keywords.append(theme_name.replace('-', ' '))  # Handle hyphens
+            
+            # Add specific keyword mappings for popular themes
+            if 'star wars' in theme_name:
+                keywords.extend(['starwars', 'jedi', 'sith', 'vader', 'millennium falcon', 
+                               'luke skywalker', 'darth vader', 'empire', 'rebel', 'galaxy'])
+            elif 'harry potter' in theme_name:
+                keywords.extend(['hogwarts', 'wizarding', 'hermione', 'dumbledore', 'magic', 
+                               'wizard', 'witch', 'quidditch', 'gryffindor', 'hogwarts castle'])
+            elif 'technic' in theme_name:
+                keywords.extend(['mechanical', 'gears', 'motors', 'pneumatic', 'motorized',
+                               'engine', 'transmission', 'engineering'])
+            elif 'city' in theme_name:
+                keywords.extend(['police', 'fire department', 'ambulance', 'urban', 'metropolitan',
+                               'rescue', 'emergency', 'hospital', 'construction site'])
+            elif 'creator' in theme_name:
+                keywords.extend(['3-in-1', 'modular', 'expert', 'alternative builds', 'multi-build'])
+            elif 'friends' in theme_name:
+                keywords.extend(['olivia', 'emma', 'mia', 'heartlake', 'friendship', 'girl'])
+            elif 'ninjago' in theme_name:
+                keywords.extend(['ninja', 'lloyd', 'kai', 'spinjitzu', 'sensei', 'dragon'])
+            elif 'architecture' in theme_name:
+                keywords.extend(['landmark', 'building', 'skyline', 'buildings', 'architectural',
+                               'famous building', 'monument'])
+            elif 'ideas' in theme_name or 'cuusoo' in theme_name:
+                keywords.extend(['fan-designed', 'community', 'fan-created', 'crowdsourced'])
+            elif 'castle' in theme_name:
+                keywords.extend(['medieval', 'knight', 'dragon', 'fortress', 'kingdom', 'royal'])
+            elif 'space' in theme_name:
+                keywords.extend(['spaceship', 'galaxy', 'astronaut', 'rocket', 'sci-fi', 'alien',
+                               'mars', 'planet', 'space station'])
+            elif 'pirates' in theme_name:
+                keywords.extend(['pirate ship', 'treasure', 'captain', 'caribbean', 'sailing'])
+            elif 'train' in theme_name:
+                keywords.extend(['locomotive', 'railway', 'railroad', 'station', 'cargo train'])
+            elif 'car' in theme_name or 'racing' in theme_name or 'speed' in theme_name:
+                keywords.extend(['vehicle', 'automobile', 'racing', 'speed', 'formula', 'sports car'])
+            elif 'minecraft' in theme_name:
+                keywords.extend(['block', 'creeper', 'steve', 'building game', 'pixelated'])
+            elif 'disney' in theme_name:
+                keywords.extend(['princess', 'mickey', 'mouse', 'fairy tale', 'animation'])
+            elif 'super heroes' in theme_name or 'superhero' in theme_name:
+                keywords.extend(['batman', 'superman', 'spider-man', 'avengers', 'marvel', 'dc'])
+            elif 'jurassic' in theme_name:
+                keywords.extend(['dinosaur', 'prehistoric', 't-rex', 'velociraptor', 'fossil'])
+            elif any(word in theme_name for word in ['winter', 'christmas', 'holiday']):
+                keywords.extend(['seasonal', 'festive', 'snow', 'santa', 'christmas tree'])
+            elif 'modular' in theme_name:
+                keywords.extend(['building', 'street', 'shop', 'cafe', 'detailed building'])
+            
+            # Add variations and common misspellings
+            keywords.extend([
+                theme_name.replace('lego', '').strip(),
+                theme_name.replace('the', '').strip(),
+                ''.join(theme_name.split())  # No spaces version
+            ])
+            
+            # Remove empty strings and duplicates
+            keywords = list(set([k for k in keywords if k and len(k) > 1]))
+            theme_keywords[theme['name']] = keywords
+        
+        self.lego_themes = theme_keywords
+    
+    def _build_interest_categories(self, themes_data: List[Dict]):
+        """Build enhanced interest categories based on theme data"""
+        # Analyze themes to build comprehensive interest categories
+        theme_names = [theme['name'].lower() for theme in themes_data]
+        
+        self.interest_categories = {
+            'space': [
+                'space', 'spaceship', 'galaxy', 'astronaut', 'rocket', 'sci-fi', 'alien',
+                'mars', 'planet', 'space station', 'shuttle', 'satellite', 'cosmos'
+            ],
+            'vehicles': [
+                'car', 'truck', 'vehicle', 'motorized', 'motor', 'driving', 'automobile',
+                'racing', 'formula', 'sports car', 'motorcycle', 'bus', 'van', 'emergency vehicle'
+            ],
+            'buildings': [
+                'building', 'house', 'castle', 'architecture', 'construction', 'skyscraper',
+                'monument', 'landmark', 'tower', 'bridge', 'church', 'palace', 'fortress'
+            ],
+            'action_adventure': [
+                'action', 'battle', 'fight', 'adventure', 'hero', 'superhero', 'combat',
+                'mission', 'rescue', 'quest', 'exploration'
+            ],
+            'animals_nature': [
+                'animal', 'pet', 'zoo', 'wildlife', 'creature', 'dinosaur', 'dragon',
+                'forest', 'jungle', 'ocean', 'sea', 'nature', 'safari'
+            ],
+            'fantasy_magic': [
+                'fantasy', 'magic', 'wizard', 'witch', 'dragon', 'fairy', 'unicorn',
+                'magical', 'enchanted', 'mystical', 'legend', 'myth'
+            ],
+            'science_technology': [
+                'robot', 'mechanical', 'engineering', 'technology', 'tech', 'cyberpunk',
+                'futuristic', 'android', 'automation', 'programming'
+            ],
+            'history_culture': [
+                'medieval', 'ancient', 'historical', 'cultural', 'traditional', 'viking',
+                'roman', 'egyptian', 'samurai', 'knight', 'warrior'
+            ],
+            'trains_transport': [
+                'train', 'railway', 'locomotive', 'cargo', 'passenger', 'subway',
+                'monorail', 'tram', 'station', 'tracks'
+            ],
+            'emergency_services': [
+                'police', 'fire', 'ambulance', 'rescue', 'hospital', 'emergency',
+                'paramedic', 'firefighter', 'coast guard'
+            ],
+            'pirates_adventure': [
+                'pirate', 'treasure', 'ship', 'sailing', 'ocean', 'island',
+                'captain', 'crew', 'adventure', 'caribbean'
+            ],
+            'seasonal_holiday': [
+                'christmas', 'holiday', 'winter', 'halloween', 'easter', 'valentine',
+                'seasonal', 'festive', 'celebration', 'thanksgiving'
+            ]
+        }
+        
+        # Add theme-specific categories for major franchises found in data
+        franchise_categories = {}
+        for theme in themes_data:
+            theme_name = theme['name'].lower()
+            if 'star wars' in theme_name:
+                franchise_categories['star_wars'] = [
+                    'star wars', 'jedi', 'sith', 'force', 'empire', 'rebel',
+                    'galaxy far far away', 'lightsaber', 'death star'
+                ]
+            elif 'harry potter' in theme_name:
+                franchise_categories['harry_potter'] = [
+                    'harry potter', 'wizarding world', 'hogwarts', 'magic', 'spell',
+                    'quidditch', 'wizard', 'witch', 'magical creatures'
+                ]
+            elif 'marvel' in theme_name or 'superhero' in theme_name:
+                franchise_categories['superheroes'] = [
+                    'superhero', 'comic', 'marvel', 'dc', 'batman', 'superman',
+                    'spider-man', 'avengers', 'justice league', 'powers'
+                ]
+        
+        self.interest_categories.update(franchise_categories)
+    
+    def _load_fallback_themes(self):
+        """Load fallback themes in case database loading fails"""
+        logger.info("Loading fallback theme mappings")
+        self.lego_themes = {
+            'Star Wars': ['star wars', 'starwars', 'jedi', 'sith', 'vader', 'millennium falcon', 'space', 'spaceship', 'galaxy'],
+            'Harry Potter': ['harry potter', 'hogwarts', 'wizarding', 'hermione', 'dumbledore'],
+            'Technic': ['technic', 'mechanical', 'gears', 'motors', 'pneumatic', 'vehicles', 'cars', 'trucks', 'motorized'],
+            'City': ['city', 'police', 'fire department', 'ambulance', 'train'],
+            'Creator': ['creator', '3-in-1', 'modular', 'expert', 'vehicles'],
+            'Friends': ['friends', 'olivia', 'emma', 'mia', 'heartlake'],
+            'Ninjago': ['ninjago', 'ninja', 'lloyd', 'kai', 'spinjitzu'],
+            'Architecture': ['architecture', 'landmark', 'building', 'skyline', 'buildings'],
+            'Ideas': ['ideas', 'fan-designed', 'community'],
+            'Castle': ['castle', 'medieval', 'knight', 'dragon', 'buildings']
+        }
+        
+        self.interest_categories = {
+            'space': ['space', 'spaceship', 'galaxy', 'astronaut', 'rocket', 'sci-fi'],
+            'vehicles': ['car', 'truck', 'vehicle', 'motorized', 'motor', 'driving'],
+            'buildings': ['building', 'house', 'castle', 'architecture', 'construction'],
+            'action': ['action', 'battle', 'fight', 'adventure', 'hero'],
+            'animals': ['animal', 'pet', 'zoo', 'wildlife', 'creature']
+        }
+    
+    def refresh_themes_cache(self, force_refresh: bool = False):
+        """Refresh themes from database if cache is stale"""
+        if (force_refresh or 
+            not self.theme_cache_timestamp or 
+            (datetime.now() - self.theme_cache_timestamp).total_seconds() > 3600):  # 1 hour cache
+            logger.info("Refreshing themes cache from database")
+            self._load_themes_from_database()
+    
+    def fuzzy_match_theme(self, query_text: str, threshold: float = 0.7) -> List[str]:
+        """
+        Perform fuzzy matching on theme names for better recognition
+        
+        Args:
+            query_text: Text to match against themes
+            threshold: Similarity threshold (0.0 to 1.0)
+            
+        Returns:
+            List of matching theme names
+        """
+        try:
+            from difflib import SequenceMatcher
+        except ImportError:
+            logger.warning("difflib not available for fuzzy matching")
+            return []
+        
+        matches = []
+        query_lower = query_text.lower()
+        
+        for theme_name, keywords in self.lego_themes.items():
+            # Check exact theme name similarity
+            similarity = SequenceMatcher(None, query_lower, theme_name.lower()).ratio()
+            if similarity >= threshold:
+                matches.append(theme_name)
+                continue
+            
+            # Check similarity with each keyword
+            for keyword in keywords:
+                similarity = SequenceMatcher(None, query_lower, keyword.lower()).ratio()
+                if similarity >= threshold:
+                    matches.append(theme_name)
+                    break
+        
+        return list(set(matches))
+    
+    def get_theme_hierarchy_context(self, theme_name: str) -> Dict[str, Any]:
+        """
+        Get hierarchical context for a theme (parent/child relationships)
+        
+        Args:
+            theme_name: Name of the theme
+            
+        Returns:
+            Dictionary with hierarchy information
+        """
+        context = {
+            'theme': theme_name,
+            'parent': self.theme_hierarchy.get(theme_name),
+            'children': [],
+            'siblings': []
+        }
+        
+        # Find children
+        for child, parent in self.theme_hierarchy.items():
+            if parent == theme_name:
+                context['children'].append(child)
+            elif parent == context['parent'] and child != theme_name:
+                context['siblings'].append(child)
+        
+        return context
+    
+    def enhance_theme_detection(self, query: str) -> Dict[str, Any]:
+        """
+        Enhanced theme detection combining exact matching, fuzzy matching, and hierarchy
+        
+        Args:
+            query: User query string
+            
+        Returns:
+            Dictionary with detected themes and confidence scores
+        """
+        results = {
+            'exact_matches': [],
+            'fuzzy_matches': [],
+            'hierarchy_suggestions': [],
+            'confidence_scores': {}
+        }
+        
+        query_lower = query.lower()
+        
+        # Exact keyword matching
+        for theme_name, keywords in self.lego_themes.items():
+            for keyword in keywords:
+                if keyword in query_lower:
+                    results['exact_matches'].append(theme_name)
+                    results['confidence_scores'][theme_name] = 1.0
+                    break
+        
+        # Fuzzy matching for themes not found exactly
+        exact_match_names = set(results['exact_matches'])
+        fuzzy_matches = self.fuzzy_match_theme(query, threshold=0.6)
+        for match in fuzzy_matches:
+            if match not in exact_match_names:
+                results['fuzzy_matches'].append(match)
+                results['confidence_scores'][match] = 0.7
+        
+        # Add hierarchy suggestions for exact matches
+        for theme in results['exact_matches']:
+            hierarchy = self.get_theme_hierarchy_context(theme)
+            if hierarchy['children'] or hierarchy['siblings']:
+                results['hierarchy_suggestions'].extend(hierarchy['children'][:3])  # Limit suggestions
+                results['hierarchy_suggestions'].extend(hierarchy['siblings'][:2])
+        
+        # Remove duplicates while preserving order
+        results['hierarchy_suggestions'] = list(dict.fromkeys(results['hierarchy_suggestions']))
+        
+        return results
+    
+    def validate_database_connection(self) -> bool:
+        """Validate that database connection is working and themes table exists"""
+        try:
+            cursor = self.dbconn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM themes LIMIT 1")
+            result = cursor.fetchone()
+            return result is not None
+        except Exception as e:
+            logger.error(f"Database validation failed: {e}")
+            return False
+    
+    def get_theme_statistics(self) -> Dict[str, Any]:
+        """Get statistics about loaded themes for monitoring/debugging"""
+        stats = {
+            'total_themes': len(self.lego_themes),
+            'total_keywords': sum(len(keywords) for keywords in self.lego_themes.values()),
+            'interest_categories': len(self.interest_categories),
+            'cache_age_minutes': 0,
+            'database_connected': self.validate_database_connection()
+        }
+        
+        if self.theme_cache_timestamp:
+            cache_age = (datetime.now() - self.theme_cache_timestamp).total_seconds() / 60
+            stats['cache_age_minutes'] = round(cache_age, 2)
+        
+        return stats
+    
+    def get_popular_themes(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get popular themes based on set count from database
+        
+        Args:
+            limit: Maximum number of themes to return
+            
+        Returns:
+            List of theme dictionaries with popularity info
+        """
+        try:
+            cursor = self.dbconn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("""
+                SELECT t.name, COUNT(s.set_num) as set_count
+                FROM themes t
+                LEFT JOIN sets s ON t.id = s.theme_id
+                GROUP BY t.id, t.name
+                HAVING COUNT(s.set_num) > 0
+                ORDER BY set_count DESC
+                LIMIT %s
+            """, (limit,))
+            
+            popular_themes = []
+            for row in cursor.fetchall():
+                theme_info = {
+                    'name': row['name'],
+                    'set_count': row['set_count'],
+                    'keywords': self.lego_themes.get(row['name'], [])
+                }
+                popular_themes.append(theme_info)
+            
+            return popular_themes
+            
+        except Exception as e:
+            logger.error(f"Failed to get popular themes: {e}")
+            return []
+    
+    def suggest_themes_for_user(self, user_query: str, user_age: Optional[int] = None, 
+                               interest_categories: Optional[List[str]] = None) -> List[str]:
+        """
+        Suggest themes based on user query and profile
+        
+        Args:
+            user_query: User's natural language query
+            user_age: User's age (for age-appropriate suggestions)
+            interest_categories: User's interest categories
+            
+        Returns:
+            List of suggested theme names
+        """
+        suggestions = []
+        
+        # First, try enhanced theme detection
+        detection_results = self.enhance_theme_detection(user_query)
+        suggestions.extend(detection_results['exact_matches'])
+        suggestions.extend(detection_results['fuzzy_matches'])
+        suggestions.extend(detection_results['hierarchy_suggestions'])
+        
+        # Add suggestions based on interest categories
+        if interest_categories:
+            category_theme_mapping = {
+                'space': ['Space', 'Star Wars', 'Galaxy Squad', 'Mars Mission'],
+                'vehicles': ['Technic', 'City', 'Speed Champions', 'Racers'],
+                'buildings': ['Architecture', 'Creator', 'Modular Buildings'],
+                'action_adventure': ['Ninjago', 'Super Heroes DC', 'Super Heroes Marvel'],
+                'fantasy_magic': ['Harry Potter', 'Castle', 'Elves'],
+                'animals_nature': ['Friends', 'Duplo'],
+            }
+            
+            for category in interest_categories:
+                if category in category_theme_mapping:
+                    suggestions.extend(category_theme_mapping[category])
+        
+        # Age-based suggestions
+        if user_age:
+            if user_age <= 5:
+                suggestions.extend(['Duplo', 'Mickey & Friends'])
+            elif user_age <= 12:
+                suggestions.extend(['City', 'Friends', 'Ninjago', 'Creator'])
+            elif user_age <= 16:
+                suggestions.extend(['Technic', 'Architecture', 'Star Wars'])
+            else:  # Adult
+                suggestions.extend(['Creator Expert', 'Architecture', 'Icons', 'Modular Buildings'])
+        
+        # Remove duplicates while preserving order
+        suggestions = list(dict.fromkeys(suggestions))
+        
+        # Filter to only themes that actually exist in our database
+        valid_suggestions = [theme for theme in suggestions if theme in self.lego_themes]
+        
+        return valid_suggestions[:10]  # Return top 10 suggestions
+    
     def classify_intent(self, query: str, conversation_context: str = "") -> str:
         """
         Classify the intent of a user query using HuggingFace models
@@ -384,30 +847,23 @@ class HuggingFaceNLPRecommender:
         # Rule-based extraction for LEGO-specific terms
         query_lower = query.lower()
         
-        # Extract themes with expanded keywords
-        lego_themes = {
-            'star wars': ['star wars', 'starwars', 'jedi', 'sith', 'vader', 'millennium falcon', 'space', 'spaceship', 'galaxy'],
-            'harry potter': ['harry potter', 'hogwarts', 'wizarding', 'hermione', 'dumbledore'],
-            'technic': ['technic', 'mechanical', 'gears', 'motors', 'pneumatic', 'vehicles', 'cars', 'trucks', 'motorized'],
-            'city': ['city', 'police', 'fire department', 'ambulance', 'train'],
-            'creator': ['creator', '3-in-1', 'modular', 'expert', 'vehicles'],
-            'friends': ['friends', 'olivia', 'emma', 'mia', 'heartlake'],
-            'ninjago': ['ninjago', 'ninja', 'lloyd', 'kai', 'spinjitzu'],
-            'architecture': ['architecture', 'landmark', 'building', 'skyline', 'buildings'],
-            'ideas': ['ideas', 'fan-designed', 'community'],
-            'castle': ['castle', 'medieval', 'knight', 'dragon', 'buildings']
-        }
+        # Enhanced theme detection using database-loaded mappings
+        theme_detection_results = self.enhance_theme_detection(query)
         
-        detected_themes = []
-        for theme, keywords in lego_themes.items():
-            if any(keyword in query_lower for keyword in keywords):
-                detected_themes.append(theme.title())
+        # Combine exact and fuzzy matches
+        detected_themes = theme_detection_results['exact_matches'] + theme_detection_results['fuzzy_matches']
         
         if detected_themes:
             filters['themes'] = detected_themes
+            # Store confidence scores for potential ranking
+            entities['theme_confidence'] = theme_detection_results['confidence_scores']
+            
+            # Add hierarchy suggestions for better recommendations
+            if theme_detection_results['hierarchy_suggestions']:
+                entities['related_themes'] = theme_detection_results['hierarchy_suggestions']
         
-        # Extract interest categories
-        interest_categories = {
+        # Extract interest categories using enhanced mappings
+        categories_to_check = self.interest_categories if hasattr(self, 'interest_categories') and self.interest_categories else {
             'space': ['space', 'spaceship', 'galaxy', 'astronaut', 'rocket', 'sci-fi'],
             'vehicles': ['car', 'truck', 'vehicle', 'motorized', 'motor', 'driving'],
             'buildings': ['building', 'house', 'castle', 'architecture', 'construction'],
@@ -415,10 +871,24 @@ class HuggingFaceNLPRecommender:
             'animals': ['animal', 'pet', 'zoo', 'wildlife', 'creature']
         }
         
-        for category, keywords in interest_categories.items():
-            if any(keyword in query_lower for keyword in keywords):
-                entities['interest_category'] = category
-                break
+        detected_categories = []
+        category_confidence = {}
+        for category, keywords in categories_to_check.items():
+            category_score = 0
+            matching_keywords = []
+            for keyword in keywords:
+                if keyword in query_lower:
+                    category_score += 1
+                    matching_keywords.append(keyword)
+            
+            if category_score > 0:
+                detected_categories.append(category)
+                category_confidence[category] = category_score / len(keywords)  # Normalized confidence
+                entities[f'{category}_keywords'] = matching_keywords
+        
+        if detected_categories:
+            entities['interest_categories'] = detected_categories
+            entities['category_confidence'] = category_confidence
         
         # Extract piece count with ranges
         piece_patterns = [
