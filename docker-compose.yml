@@ -42,6 +42,7 @@ services:
       - DB_PORT=5432
       - PYTHONPATH=${PYTHONPATH:-/app/src/scripts:/app}
       - SKIP_HEAVY_INITIALIZATION=false
+      - USE_HUGGINGFACE_NLP=true
       - HF_HOME=/app/.cache/huggingface
       - SENTENCE_TRANSFORMERS_HOME=/app/.cache/sentence-transformers
       - LANGCHAIN_CACHE_DIR=/app/.cache/langchain

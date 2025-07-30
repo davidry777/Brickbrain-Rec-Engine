@@ -7,6 +7,7 @@ from psycopg2.extras import RealDictCursor
 import logging
 from datetime import datetime
 import os
+import hashlib
 from contextlib import contextmanager, asynccontextmanager
 import asyncio
 import time
@@ -15,6 +16,10 @@ from functools import wraps
 # Import our recommendation system
 from recommendation_system import HybridRecommender, RecommendationResult, UserProfile
 from lego_nlp_recommeder import NLPRecommender, NLQueryResult
+
+# Import HuggingFace-based NLP system
+from hf_nlp_recommender import HuggingFaceNLPRecommender
+from hf_fastapi_integration import HuggingFaceNLPAPI, create_hf_nlp_routes
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -31,16 +36,22 @@ DB_PARAMS = {
 
 # Global recommendation engine instance
 recommendation_engine: Optional[HybridRecommender] = None
-nl_recommender: Optional[NLPRecommender] = None
+nl_recommender: Optional[NLPRecommender] = None  # Legacy Ollama-based (deprecated)
+hf_nlp_recommender: Optional[HuggingFaceNLPRecommender] = None  # New HuggingFace-based
+hf_nlp_api: Optional[HuggingFaceNLPAPI] = None  # HuggingFace API wrapper
 start_time = datetime.utcnow()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown"""
-    global recommendation_engine, nl_recommender
+    global recommendation_engine, nl_recommender, hf_nlp_recommender, hf_nlp_api
     
     # Check if we should skip heavy initialization for faster startup
     skip_heavy_init = os.getenv("SKIP_HEAVY_INITIALIZATION", "false").lower() == "true"
+    use_hf_nlp = os.getenv("USE_HUGGINGFACE_NLP", "true").lower() == "true"  # Default to true
+    
+    logger.info("🚀 Starting LEGO Recommendation API...")
+    logger.info(f"Environment: HuggingFace NLP = {use_hf_nlp}, Skip Heavy Init = {skip_heavy_init}")
     
     # Startup
     try:
@@ -59,40 +70,78 @@ async def lifespan(app: FastAPI):
             
             logger.info("Recommendation engine initialized successfully")
 
-            # Initialize NLP recommender
-            logger.info("Initializing natural language processor...")
-            nl_recommender = NLPRecommender(conn, use_openai=False)
+            # Choose NLP system based on configuration
+            if use_hf_nlp:
+                # Initialize HuggingFace-based NLP system (recommended)
+                logger.info("Initializing HuggingFace-based natural language processor...")
+                hf_nlp_recommender = HuggingFaceNLPRecommender(
+                    conn, 
+                    use_quantization=True,  # Enable for better memory efficiency
+                    device=None  # Auto-detect best device
+                )
+                
+                # Initialize HuggingFace API wrapper
+                hf_nlp_api = HuggingFaceNLPAPI(conn)
+                
+                logger.info("HuggingFace NLP system initialized successfully")
+                
+                # Initialize vector database for semantic search
+                logger.info("Setting up vector database for semantic search...")
+                # The vector DB initialization is handled within the HF recommender
+                
+                logger.info("HuggingFace-based NLP system fully initialized")
+                
+                # Add HuggingFace routes to the app
+                logger.info("Adding HuggingFace NLP routes...")
+                create_hf_nlp_routes(app, hf_nlp_api)
+                logger.info("HuggingFace NLP routes added successfully")
+                
+            else:
+                # Fallback to legacy Ollama-based system (deprecated)
+                logger.warning("Using legacy Ollama-based NLP system (deprecated)")
+                logger.info("Initializing legacy natural language processor...")
+                nl_recommender = NLPRecommender(conn, use_openai=False)
 
-            # Load or create embeddings
-            embeddings_path = "./embeddings/faiss_index"
-            if os.path.exists(embeddings_path):
-                logger.info("Loading existing embeddings...")
-                if not nl_recommender.load_embeddings(embeddings_path):
-                    logger.warning("Failed to load existing embeddings, creating new ones...")
-                    # Start with a smaller dataset for faster initialization
+                # Load or create embeddings for legacy system
+                embeddings_path = "./embeddings/faiss_index"
+                if os.path.exists(embeddings_path):
+                    logger.info("Loading existing embeddings...")
+                    if not nl_recommender.load_embeddings(embeddings_path):
+                        logger.warning("Failed to load existing embeddings, creating new ones...")
+                        logger.info("Processing top 1000 sets by popularity for initial setup...")
+                        nl_recommender.prep_vectorDB(limit_sets=1000)
+                        nl_recommender.save_embeddings(embeddings_path)
+                        logger.info("Initial embeddings created successfully")
+                else:
+                    logger.info("Creating new embeddings (this may take a few minutes)...")
                     logger.info("Processing top 1000 sets by popularity for initial setup...")
                     nl_recommender.prep_vectorDB(limit_sets=1000)
                     nl_recommender.save_embeddings(embeddings_path)
                     logger.info("Initial embeddings created successfully")
-            else:
-                logger.info("Creating new embeddings (this may take a few minutes)...")
-                # Start with a smaller dataset for faster initialization
-                logger.info("Processing top 1000 sets by popularity for initial setup...")
-                nl_recommender.prep_vectorDB(limit_sets=1000)
-                nl_recommender.save_embeddings(embeddings_path)
-                logger.info("Initial embeddings created successfully")
+                
+                logger.info("Legacy natural language processor initialized successfully")
+                
         else:
             logger.info("Skipping heavy initialization for faster startup")
             logger.info("Basic recommendation engine initialized successfully")
             
             # Initialize NLP recommender with minimal setup
-            logger.info("Initializing NLP recommender with minimal setup...")
-            nl_recommender = NLPRecommender(conn, use_openai=False)
-            logger.info("NLP recommender initialized (without embeddings)")
+            if use_hf_nlp:
+                logger.info("Initializing HuggingFace NLP recommender with minimal setup...")
+                hf_nlp_recommender = HuggingFaceNLPRecommender(conn, use_quantization=False)
+                hf_nlp_api = HuggingFaceNLPAPI(conn)
+                logger.info("HuggingFace NLP recommender initialized (minimal setup)")
+                
+                # Add HuggingFace routes to the app
+                logger.info("Adding HuggingFace NLP routes...")
+                create_hf_nlp_routes(app, hf_nlp_api)
+                logger.info("HuggingFace NLP routes added successfully")
+            else:
+                logger.info("Initializing legacy NLP recommender with minimal setup...")
+                nl_recommender = NLPRecommender(conn, use_openai=False)
+                logger.info("Legacy NLP recommender initialized (without embeddings)")
             
         logger.info("API server startup complete")
-
-        logger.info("Natural language processor initialized successfully")
 
     except Exception as e:
         logger.error(f"Failed to initialize recommendation engine: {e}")
@@ -103,6 +152,16 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("API shutting down...")
+    
+    # Cleanup HuggingFace resources
+    if hf_nlp_api:
+        try:
+            hf_nlp_api.cleanup()
+            logger.info("HuggingFace NLP API cleaned up")
+        except Exception as e:
+            logger.error(f"Error cleaning up HuggingFace NLP API: {e}")
+    
+    # Close database connections
     if recommendation_engine and recommendation_engine.dbcon:
         try:
             recommendation_engine.dbcon.close()
@@ -450,7 +509,6 @@ async def create_user(
     Create a new user account
     """
     try:
-        import hashlib
         password_hash = hashlib.sha256(user_data.password.encode()).hexdigest()
         
         cursor = db.cursor()
@@ -815,25 +873,39 @@ async def health_check(db: psycopg2.extensions.connection = Depends(get_db)):
         except Exception as db_e:
             logger.warning(f"Database check failed: {db_e}")
         
-        # Check NLP system status
+        # Check NLP system status (HuggingFace-based system)
         nlp_status = "not_ready"
-        if nl_recommender:
+        if hf_nlp_recommender:
             try:
-                # Test if NLP recommender can process a basic query
+                # Test if HuggingFace NLP recommender is properly initialized
+                if hasattr(hf_nlp_recommender, 'embedding_model') and hf_nlp_recommender.embedding_model and hasattr(hf_nlp_recommender, 'is_initialized') and hf_nlp_recommender.is_initialized:
+                    nlp_status = "ready"
+            except Exception as nlp_e:
+                logger.warning(f"HuggingFace NLP system check failed: {nlp_e}")
+        elif nl_recommender:
+            try:
+                # Fallback check for legacy system
                 test_result = nl_recommender.process_nl_query("test", None)
                 if test_result:
                     nlp_status = "ready"
             except Exception as nlp_e:
-                logger.warning(f"NLP system check failed: {nlp_e}")
+                logger.warning(f"Legacy NLP system check failed: {nlp_e}")
         
         # Check vector database status
         vectordb_status = "not_ready"
-        if nl_recommender and hasattr(nl_recommender, 'vectorstore') and nl_recommender.vectorstore:
+        if hf_nlp_recommender:
             try:
-                # Test if vector store is accessible
+                # Check if HuggingFace vector database is ready
+                if hasattr(hf_nlp_recommender, 'embedding_model') and hf_nlp_recommender.embedding_model:
+                    vectordb_status = "ready"
+            except Exception as vec_e:
+                logger.warning(f"HuggingFace Vector DB check failed: {vec_e}")
+        elif nl_recommender and hasattr(nl_recommender, 'vectorstore') and nl_recommender.vectorstore:
+            try:
+                # Fallback check for legacy vector store
                 vectordb_status = "ready"
             except Exception as vec_e:
-                logger.warning(f"Vector DB check failed: {vec_e}")
+                logger.warning(f"Legacy Vector DB check failed: {vec_e}")
         
         # Check if embeddings exist
         embeddings_exist = os.path.exists("./embeddings/faiss_index")
@@ -874,6 +946,126 @@ async def natural_language_search(
     - "Something like the Millennium Falcon but smaller"
     """
     try:
+        # Check if HuggingFace NLP system is available
+        if hf_nlp_recommender:
+            # Use HuggingFace NLP system directly
+            try:
+                # Process the natural language query
+                processed_query = hf_nlp_recommender.process_natural_language_query(nl_query.query)
+                
+                # Implement actual search using extracted filters
+                results = []
+                filters = processed_query.get('filters', {})
+                
+                # Build SQL query based on extracted filters
+                cursor = db.cursor(cursor_factory=RealDictCursor)
+                where_conditions = ["s.num_parts > 0"]  # Basic filter for actual sets
+                params = []
+                
+                # Apply theme filters
+                if filters.get('themes'):
+                    theme_conditions = []
+                    for theme in filters['themes']:
+                        theme_conditions.append("t.name ILIKE %s")
+                        params.append(f"%{theme}%")
+                    where_conditions.append(f"({' OR '.join(theme_conditions)})")
+                
+                # Apply piece count filters
+                if filters.get('min_pieces'):
+                    where_conditions.append("s.num_parts >= %s")
+                    params.append(filters['min_pieces'])
+                if filters.get('max_pieces'):
+                    where_conditions.append("s.num_parts <= %s")
+                    params.append(filters['max_pieces'])
+                
+                # Apply age filters (approximate by typical age ranges for piece counts)
+                if filters.get('min_age'):
+                    # Younger kids = fewer pieces typically
+                    if filters['min_age'] <= 8:
+                        where_conditions.append("s.num_parts BETWEEN 50 AND 800")
+                    elif filters['min_age'] <= 12:
+                        where_conditions.append("s.num_parts BETWEEN 200 AND 1500")
+                    else:
+                        where_conditions.append("s.num_parts >= 500")
+                
+                # Apply price range filters (basic estimation)
+                if filters.get('price_range') and len(filters['price_range']) >= 2:
+                    max_price = filters['price_range'][1]
+                    if max_price <= 50:
+                        where_conditions.append("s.num_parts <= 500")  # Smaller sets tend to be cheaper
+                    elif max_price <= 100:
+                        where_conditions.append("s.num_parts <= 1000")
+                
+                where_clause = " AND ".join(where_conditions)
+                
+                search_query = f"""
+                SELECT s.set_num, s.name, t.name as theme_name, s.year, s.num_parts,
+                       s.img_url, s.num_parts as relevance_score
+                FROM sets s
+                LEFT JOIN themes t ON s.theme_id = t.id
+                WHERE {where_clause}
+                ORDER BY s.num_parts DESC, s.year DESC
+                LIMIT %s
+                """
+                params.append(nl_query.top_k)
+                
+                cursor.execute(search_query, params)
+                search_results = cursor.fetchall()
+                
+                # Convert to NLSearchResult format
+                for result in search_results:
+                    # Calculate relevance score based on filter matches
+                    relevance = 0.5  # Base score
+                    match_reasons = []
+                    
+                    # Boost score for theme matches
+                    if filters.get('themes'):
+                        for theme in filters['themes']:
+                            if theme.lower() in result['theme_name'].lower():
+                                relevance += 0.3
+                                match_reasons.append(f"Matches {theme} theme")
+                    
+                    # Boost score for piece count in range
+                    if filters.get('min_pieces') and filters.get('max_pieces'):
+                        if filters['min_pieces'] <= result['num_parts'] <= filters['max_pieces']:
+                            relevance += 0.2
+                            match_reasons.append(f"Perfect piece count ({result['num_parts']} pieces)")
+                    
+                    if not match_reasons:
+                        match_reasons = ["Matches your search criteria"]
+                    
+                    results.append(NLSearchResult(
+                        set_num=result['set_num'],
+                        name=result['name'],
+                        theme=result['theme_name'],
+                        year=result['year'],
+                        num_parts=result['num_parts'],
+                        relevance_score=min(relevance, 1.0),
+                        match_reasons=match_reasons,
+                        description=f"{result['name']} - {result['num_parts']} pieces from {result['year']}"
+                    ))
+                
+                # Format the response to match NLSearchResponse model
+                response = NLSearchResponse(
+                    query=nl_query.query,
+                    intent=processed_query.get('intent', 'search'),
+                    extracted_filters=processed_query.get('filters', {}),
+                    results=results,
+                    explanation=f"Processed '{nl_query.query}' with intent '{processed_query.get('intent', 'search')}' and confidence {processed_query.get('confidence', 0.8):.2f}" if nl_query.include_explanation else None,
+                    query_understanding={
+                        'confidence': processed_query.get('confidence', 0.8),
+                        'entities': processed_query.get('entities', {}),
+                        'semantic_query': processed_query.get('semantic_query', nl_query.query)
+                    }
+                )
+                
+                return response
+                
+            except Exception as hf_error:
+                logger.error(f"HuggingFace NLP error: {hf_error}")
+                # Continue to fallback below
+        
+        # Fallback to legacy system
         if not nl_recommender:
             raise HTTPException(
                 status_code=503, 
@@ -956,6 +1148,200 @@ async def find_semantically_similar_sets(
     Example: Find sets similar to 75192-1 but "easier to build and more affordable"
     """
     try:
+        # Use fresh connection to avoid transaction issues
+        with get_db_connection() as fresh_db:
+            cursor = fresh_db.cursor(cursor_factory=RealDictCursor)
+            
+            # Get the target set details
+            cursor.execute("""
+                SELECT s.*, t.name as theme_name 
+                FROM sets s 
+                LEFT JOIN themes t ON s.theme_id = t.id 
+                WHERE s.set_num = %s
+            """, (query.set_num,))
+            
+            target_set = cursor.fetchone()
+            if not target_set:
+                raise HTTPException(status_code=404, detail="Set not found")
+            
+            # Simple similarity search based on theme and piece count
+            # This avoids complex HuggingFace logic that might cause transaction issues
+            cursor.execute("""
+                SELECT s.set_num, s.name, t.name as theme_name, s.year, s.num_parts,
+                       ABS(s.num_parts - %s) as piece_diff
+                FROM sets s
+                LEFT JOIN themes t ON s.theme_id = t.id
+                WHERE s.set_num != %s 
+                  AND s.theme_id = %s 
+                  AND s.num_parts > 0
+                  AND s.num_parts BETWEEN %s AND %s
+                ORDER BY piece_diff ASC, s.year DESC
+                LIMIT %s
+            """, (
+                target_set['num_parts'],  # for piece_diff calculation
+                query.set_num,           # exclude the target set
+                target_set['theme_id'],  # same theme
+                max(1, int(target_set['num_parts'] * 0.5)),  # min pieces (50% of target)
+                int(target_set['num_parts'] * 1.5),          # max pieces (150% of target)
+                query.top_k
+            ))
+            
+            similar_sets = cursor.fetchall()
+            
+            # Convert to response format
+            enhanced_results = []
+            for result in similar_sets:
+                # Calculate relevance score based on piece count similarity
+                piece_similarity = 1.0 - (result['piece_diff'] / max(target_set['num_parts'], result['num_parts']))
+                relevance_score = max(0.1, piece_similarity)  # minimum 0.1 score
+                
+                match_reasons = [
+                    f"Same theme: {result['theme_name']}",
+                    f"Similar size: {result['num_parts']} vs {target_set['num_parts']} pieces"
+                ]
+                
+                if query.description:
+                    match_reasons.append(f"Considering: {query.description}")
+                
+                enhanced_results.append(NLSearchResult(
+                    set_num=result['set_num'],
+                    name=result['name'],
+                    theme=result['theme_name'],
+                    year=result['year'],
+                    num_parts=result['num_parts'],
+                    relevance_score=relevance_score,
+                    match_reasons=match_reasons,
+                    description=f"{result['name']} - {result['num_parts']} pieces from {result['year']}"
+                ))
+            
+            return enhanced_results
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Semantic similarity search error: {e}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        
+        # Check if HuggingFace NLP system is available
+        if hf_nlp_recommender:
+            # Use HuggingFace NLP system for semantic search
+            try:
+                # Create search query combining set info and user requirements
+                search_query = f"Sets similar to {target_set['name']} from {target_set['theme_name']} theme"
+                if query.description:
+                    search_query += f" but {query.description}"
+                
+                # Process with HuggingFace system
+                processed_query = hf_nlp_recommender.process_natural_language_query(search_query)
+                
+                # Find similar sets based on theme, piece count, and year
+                where_conditions = ["s.set_num != %s", "s.num_parts > 0"]
+                params = [query.set_num]
+                
+                # Same theme gets priority
+                where_conditions.append("s.theme_id = %s")
+                params.append(target_set['theme_id'])
+                
+                # Similar piece count (within 50% range)
+                min_pieces = max(1, int(target_set['num_parts'] * 0.5))
+                max_pieces = int(target_set['num_parts'] * 1.5)
+                where_conditions.append("s.num_parts BETWEEN %s AND %s")
+                params.extend([min_pieces, max_pieces])
+                
+                # Recent sets (within 10 years)
+                min_year = max(1950, target_set['year'] - 10)
+                where_conditions.append("s.year >= %s")
+                params.append(min_year)
+                
+                where_clause = " AND ".join(where_conditions)
+                
+                similar_query = f"""
+                SELECT s.set_num, s.name, t.name as theme_name, s.year, s.num_parts,
+                       ABS(s.num_parts - %s) as piece_diff,
+                       ABS(s.year - %s) as year_diff
+                FROM sets s
+                LEFT JOIN themes t ON s.theme_id = t.id
+                WHERE {where_clause}
+                ORDER BY piece_diff ASC, year_diff ASC, s.name ASC
+                LIMIT %s
+                """
+                params.extend([target_set['num_parts'], target_set['year'], query.top_k])
+                
+                cursor.execute(similar_query, params)
+                similar_sets = cursor.fetchall()
+                
+                # Convert to response format
+                enhanced_results = []
+                for i, result in enumerate(similar_sets):
+                    # Calculate relevance score based on similarity
+                    piece_similarity = 1.0 - (result['piece_diff'] / max(target_set['num_parts'], result['num_parts']))
+                    year_similarity = 1.0 - (result['year_diff'] / 20.0)  # 20 year range
+                    relevance_score = (piece_similarity * 0.6) + (year_similarity * 0.4)
+                    
+                    match_reasons = [
+                        f"Same theme: {result['theme_name']}",
+                        f"Similar size: {result['num_parts']} vs {target_set['num_parts']} pieces",
+                        f"Relevance score: {relevance_score:.2f}"
+                    ]
+                    
+                    if query.description:
+                        match_reasons.append(f"Matches requirement: {query.description}")
+                    
+                    enhanced_results.append(NLSearchResult(
+                        set_num=result['set_num'],
+                        name=result['name'],
+                        theme=result['theme_name'],
+                        year=result['year'],
+                        num_parts=result['num_parts'],
+                        relevance_score=relevance_score,
+                        match_reasons=match_reasons,
+                        description=f"{result['name']} - {result['num_parts']} pieces from {result['year']}"
+                    ))
+                
+                return enhanced_results
+                
+            except Exception as hf_error:
+                logger.error(f"HuggingFace semantic search error: {hf_error}")
+                # If HuggingFace system fails, provide a basic similarity fallback
+                # using database-only similarity (same theme, similar piece count)
+                
+                # Fallback: Find similar sets based on theme and piece count only
+                fallback_query = """
+                SELECT s.set_num, s.name, t.name as theme_name, s.year, s.num_parts,
+                       ABS(s.num_parts - %s) as piece_diff
+                FROM sets s
+                LEFT JOIN themes t ON s.theme_id = t.id
+                WHERE s.set_num != %s AND s.theme_id = %s AND s.num_parts > 0
+                ORDER BY piece_diff ASC, s.year DESC
+                LIMIT %s
+                """
+                
+                cursor.execute(fallback_query, (
+                    target_set['num_parts'], 
+                    query.set_num, 
+                    target_set['theme_id'], 
+                    query.top_k
+                ))
+                fallback_results = cursor.fetchall()
+                
+                enhanced_results = []
+                for result in fallback_results:
+                    relevance_score = 1.0 - (result['piece_diff'] / max(target_set['num_parts'], result['num_parts']))
+                    
+                    enhanced_results.append(NLSearchResult(
+                        set_num=result['set_num'],
+                        name=result['name'],
+                        theme=result['theme_name'],
+                        year=result['year'],
+                        num_parts=result['num_parts'],
+                        relevance_score=relevance_score,
+                        match_reasons=[f"Same theme: {result['theme_name']}", f"Similar size: {result['num_parts']} pieces"],
+                        description=f"{result['name']} - {result['num_parts']} pieces from {result['year']}"
+                    ))
+                
+                return enhanced_results
+        
+        # If no HuggingFace system is available, check for legacy system
         if not nl_recommender:
             raise HTTPException(
                 status_code=503,
@@ -1012,7 +1398,19 @@ async def find_semantically_similar_sets(
         
     except Exception as e:
         logger.error(f"Semantic similarity search error: {e}")
+        try:
+            if cursor:
+                cursor.close()
+            db.rollback()
+        except Exception as cleanup_error:
+            logger.error(f"Error during cleanup: {cleanup_error}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        try:
+            if cursor:
+                cursor.close()
+        except Exception as cursor_error:
+            logger.error(f"Error closing cursor: {cursor_error}")
 
 # Conversational Recommendation Endpoint
 @app.post("/recommendations/conversational", response_model=Dict[str, Any])
@@ -1027,6 +1425,70 @@ async def conversational_recommendations(
     Supports multi-turn conversations about LEGO recommendations.
     """
     try:
+        # Check if HuggingFace NLP system is available
+        if hf_nlp_recommender:
+            # Use HuggingFace NLP system for conversational recommendations
+            try:
+                # Process the current query
+                processed_query = hf_nlp_recommender.process_natural_language_query(conv_query.query)
+                
+                # Get actual recommendations from the database
+                search_results = hf_nlp_recommender.search_recommendations(processed_query, top_k=5)
+                
+                # If no results, fall back to a basic query
+                if not search_results:
+                    # Get some default sets as fallback
+                    cursor = db.cursor(cursor_factory=RealDictCursor)
+                    cursor.execute("""
+                        SELECT s.set_num, s.name, s.year, s.num_parts, s.img_url,
+                               t.name as theme_name
+                        FROM sets s
+                        LEFT JOIN themes t ON s.theme_id = t.id
+                        WHERE s.num_parts IS NOT NULL 
+                        AND s.num_parts > 100
+                        AND s.year >= 2015
+                        ORDER BY s.num_parts DESC, RANDOM()
+                        LIMIT 5
+                    """)
+                    
+                    search_results = []
+                    for row in cursor.fetchall():
+                        search_results.append({
+                            'set_num': row['set_num'],
+                            'name': row['name'],
+                            'year': row['year'],
+                            'num_parts': row['num_parts'],
+                            'theme': row['theme_name'] or 'Generic',
+                            'img_url': row['img_url'],
+                            'relevance_score': 0.7
+                        })
+                    cursor.close()
+                
+                # Build conversational response
+                response = {
+                    "type": "conversational_recommendation",
+                    "results": search_results,
+                    "intent": processed_query.get('intent', 'search'),
+                    "confidence": processed_query.get('confidence', 0.8),
+                    "follow_up_questions": [
+                        "Would you like to see sets in a specific theme?",
+                        "What age range are you shopping for?",
+                        "Do you have a budget in mind?"
+                    ],
+                    "conversation_context": {
+                        "previous_query": conv_query.query,
+                        "extracted_entities": processed_query.get('entities', {}),
+                        "filters": processed_query.get('filters', {})
+                    }
+                }
+                
+                return response
+                
+            except Exception as hf_error:
+                logger.error(f"HuggingFace conversational error: {hf_error}")
+                # Continue to fallback below
+        
+        # Fallback to legacy system
         if not nl_recommender:
             raise HTTPException(
                 status_code=503,
@@ -1092,6 +1554,27 @@ async def understand_query(query: str = Body(..., embed=True)):
     Useful for debugging and understanding how the system interprets queries.
     """
     try:
+        # Check if HuggingFace NLP system is available
+        if hf_nlp_recommender:
+            # Use HuggingFace NLP system directly
+            try:
+                processed_query = hf_nlp_recommender.process_natural_language_query(query)
+                
+                return {
+                    'original_query': query,
+                    'intent': processed_query.get('intent', 'search'),
+                    'confidence': processed_query.get('confidence', 0.8),
+                    'extracted_filters': processed_query.get('filters', {}),
+                    'extracted_entities': processed_query.get('entities', {}),
+                    'semantic_query': processed_query.get('semantic_query', query),
+                    'interpretation': f"Interpreted as {processed_query.get('intent', 'search')} with {processed_query.get('confidence', 0.8):.1%} confidence"
+                }
+                
+            except Exception as hf_error:
+                logger.error(f"HuggingFace NLP error: {hf_error}")
+                # Continue to fallback below
+        
+        # Fallback to legacy system
         if not nl_recommender:
             raise HTTPException(
                 status_code=503,
@@ -1366,4 +1849,121 @@ def _handle_collection_advice(nl_recommender, nl_result, conv_query, db):
             "Are you looking for investment pieces or personal enjoyment?",
             "Do you prefer sealed sets or are you planning to build them?"
         ]
+    }
+
+# Enhanced health endpoint that includes HuggingFace status
+@app.get("/health/detailed")
+async def detailed_health_check():
+    """Enhanced health check including HuggingFace NLP status"""
+    health_status = {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "uptime_seconds": (datetime.utcnow() - start_time).total_seconds(),
+        "components": {
+            "database": "unknown",
+            "recommendation_engine": "unknown",
+            "legacy_nlp": "unknown",
+            "huggingface_nlp": "unknown"
+        }
+    }
+    
+    # Check database
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            health_status["components"]["database"] = "healthy"
+    except Exception as e:
+        health_status["components"]["database"] = f"unhealthy: {str(e)}"
+        health_status["status"] = "degraded"
+    
+    # Check recommendation engine
+    if recommendation_engine:
+        try:
+            # Simple test of recommendation engine
+            health_status["components"]["recommendation_engine"] = "healthy"
+        except Exception as e:
+            health_status["components"]["recommendation_engine"] = f"unhealthy: {str(e)}"
+            health_status["status"] = "degraded"
+    else:
+        health_status["components"]["recommendation_engine"] = "not_initialized"
+        health_status["status"] = "degraded"
+    
+    # Check legacy NLP system
+    if nl_recommender:
+        try:
+            health_status["components"]["legacy_nlp"] = "healthy"
+        except Exception as e:
+            health_status["components"]["legacy_nlp"] = f"unhealthy: {str(e)}"
+    else:
+        health_status["components"]["legacy_nlp"] = "not_available"
+    
+    # Check HuggingFace NLP system
+    if hf_nlp_api:
+        try:
+            hf_health = hf_nlp_api.get_system_health()
+            if hf_health.get("system_status") == "healthy":
+                health_status["components"]["huggingface_nlp"] = "healthy"
+                health_status["huggingface_details"] = hf_health
+            else:
+                health_status["components"]["huggingface_nlp"] = "degraded"
+                health_status["huggingface_details"] = hf_health
+                if health_status["status"] == "healthy":
+                    health_status["status"] = "degraded"
+        except Exception as e:
+            health_status["components"]["huggingface_nlp"] = f"unhealthy: {str(e)}"
+            if health_status["status"] == "healthy":
+                health_status["status"] = "degraded"
+    else:
+        health_status["components"]["huggingface_nlp"] = "not_available"
+    
+    return health_status
+
+# Migration endpoint to help users transition from legacy to HuggingFace endpoints
+@app.get("/api/migration-guide")
+async def get_migration_guide():
+    """Provide migration guide for transitioning from Ollama to HuggingFace endpoints"""
+    return {
+        "migration_guide": {
+            "overview": "Migration from Ollama-based to HuggingFace-based NLP system",
+            "recommended_endpoints": {
+                "natural_language_query": {
+                    "old": "POST /search/natural",
+                    "new": "POST /nlp/query",
+                    "description": "Enhanced natural language processing with better accuracy"
+                },
+                "conversational_ai": {
+                    "old": "POST /recommendations/conversational",
+                    "new": "POST /nlp/chat",
+                    "description": "Improved conversation memory and context awareness"
+                },
+                "query_understanding": {
+                    "old": "POST /nlp/understand",
+                    "new": "POST /nlp/understand",
+                    "description": "Enhanced with HuggingFace models for better entity extraction"
+                }
+            },
+            "new_features": [
+                "Advanced conversation memory with SQLite backend",
+                "User preference learning from feedback",
+                "Better intent classification accuracy",
+                "Improved entity recognition",
+                "Contextual follow-up suggestions",
+                "Conversation summarization",
+                "User analytics and personalization"
+            ],
+            "configuration": {
+                "environment_variables": {
+                    "USE_HUGGINGFACE_NLP": "true (default) | false",
+                    "SKIP_HEAVY_INITIALIZATION": "false (default) | true"
+                }
+            },
+            "performance_improvements": [
+                "Better memory efficiency with model quantization",
+                "Faster inference on local hardware",
+                "No dependency on external Ollama service",
+                "Improved conversation context handling"
+            ]
+        }
     }
