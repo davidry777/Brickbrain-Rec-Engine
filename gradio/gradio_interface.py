@@ -2,13 +2,20 @@
 """
 Gradio Interface for Brickbrain LEGO Recommendation System
 
-This interface showcases the full capabilities of the LEGO recommendation system:
-- Natural Language Search
-- Conversational Recommendations 
-- Query Understanding
-- Semantic Similarity Search
-- User Management
-- System Health Monitoring
+This interface showcases the full capabilities of the enhanced LEGO recommendation system:
+- Natural Language Search with HuggingFace NLP models
+- Conversational Recommendations with advanced entity extraction
+- Query Understanding with 411+ LEGO themes from database
+- Semantic Similarity Search using PostgreSQL pgvector
+- User Management with persistent conversation memory
+- System Health Monitoring for all components
+- Enhanced fuzzy matching and hierarchical theme detection
+
+Technical Stack:
+- HuggingFace Transformers for NLP processing
+- PostgreSQL with pgvector extension for vector search
+- LangChain integration for vector operations
+- Docker Compose with persistent model caching
 
 Prerequisites:
 - Docker Compose services running (postgres + app)
@@ -47,7 +54,7 @@ class BrickbrainGradioInterface:
 **System Status**: {data.get('status', 'OK')}
 **Database**: {"🟢 Connected" if data.get('database_status') == 'connected' else "🔴 Issues"}
 **NLP System**: {"🟢 Ready" if data.get('nlp_status') == 'ready' else "🔴 Not Ready"}
-**Vector DB**: {"🟢 Initialized" if data.get('vectordb_status') == 'ready' else "🔴 Not Ready"}
+**pgvector DB**: {"🟢 Initialized" if data.get('vectordb_status') == 'ready' else "🔴 Not Ready"}
 **Uptime**: {data.get('uptime', 'Unknown')}
                 """
             else:
@@ -786,12 +793,14 @@ with gr.Blocks(title="🧱 Brickbrain LEGO Recommender", theme=gr.themes.Soft())
     ### 🔧 Technical Details
     
     This demo showcases a production-ready LEGO recommendation system built with:
-    - **FastAPI** backend with **PostgreSQL** database
-    - **LangChain** for natural language processing
-    - **Local LLM** (Ollama with Mistral) for query understanding
-    - **FAISS** vector database for semantic search
-    - **Hybrid ML** recommendation algorithms
-    - **Docker Compose** for easy deployment
+    - **FastAPI** backend with **PostgreSQL + pgvector** database
+    - **HuggingFace Transformers** for advanced natural language processing
+    - **Local LLM** (Ollama with Mistral) + **HuggingFace models** for query understanding
+    - **PostgreSQL pgvector** extension for high-performance semantic search
+    - **LangChain + pgvector** integration for vector database operations
+    - **Enhanced entity extraction** with 411+ LEGO themes from database
+    - **Hybrid ML** recommendation algorithms with fuzzy matching
+    - **Docker Compose** for easy deployment with persistent vector storage
     
     **System Requirements**: Docker Compose services must be running on `localhost:8000`
     
