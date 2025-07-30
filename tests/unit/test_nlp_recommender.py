@@ -21,7 +21,7 @@ except ImportError:
 
 # Import HuggingFace NLP recommender
 try:
-    from src.scripts.hf_nlp_recommender import HuggingFaceNLPRecommender
+    from src.scripts.hf_nlp_recommender import HuggingFaceNLPRecommender, ConversationContext
     from src.scripts.hf_conversation_memory import ConversationMemoryDB
     HAS_HF_MODULES = True
 except ImportError as e:
@@ -106,8 +106,9 @@ class TestHuggingFaceNLPRecommender(unittest.TestCase):
         try:
             if HAS_HF_MODULES:
                 self.recommender = HuggingFaceNLPRecommender(
-                    db_connection=self.db_conn,
-                    skip_model_loading=True  # Skip actual model loading for unit tests
+                    self.db_conn,  # dbcon as positional argument
+                    use_quantization=False,  # Disable for tests
+                    device='cpu'  # Force CPU for tests
                 )
                 self.conversation_memory = ConversationMemoryDB()
             else:
@@ -187,8 +188,8 @@ class TestHuggingFaceNLPRecommender(unittest.TestCase):
     def test_conversation_context_retrieval(self):
         """Test getting conversation context."""
         # Add some interactions
-        self.recommender.add_to_conversation_memory("First query", "First response")
-        self.recommender.add_to_conversation_memory("Second query", "Second response")
+        self.recommender.add_conversation_interaction("First query", "First response")
+        self.recommender.add_conversation_interaction("Second query", "Second response")
         
         # Get context
         context = self.recommender.get_conversation_context()
@@ -248,7 +249,7 @@ class TestHuggingFaceNLPRecommender(unittest.TestCase):
         """Test context-aware query processing."""
         # Set up some context
         self.recommender.update_user_preferences({'themes': {'Star Wars': 2}})
-        self.recommender.add_to_conversation_memory("Star Wars sets", "Found sets")
+        self.recommender.add_conversation_interaction("Star Wars sets", "Found sets")
         
         # Process query with context
         query = "Show me another set"
@@ -266,7 +267,7 @@ class TestHuggingFaceNLPRecommender(unittest.TestCase):
     def test_conversation_memory_clearing(self):
         """Test clearing conversation memory."""
         # Add some data
-        self.recommender.add_to_conversation_memory("Test query", "Test response")
+        self.recommender.add_conversation_interaction("Test query", "Test response")
         self.recommender.update_user_preferences({'themes': {'Star Wars': 1}})
         
         # Clear memory
@@ -285,11 +286,11 @@ class TestHuggingFaceNLPRecommender(unittest.TestCase):
         """Test that context boosts confidence scores."""
         # Query without context
         query = "LEGO sets"
-        result_no_context = self.recommender.process_nl_query(query, None)
+        result_no_context = self.recommender.process_natural_language_query(query)
         
         # Add context
         self.recommender.update_user_preferences({'themes': {'Star Wars': 1}})
-        self.recommender.add_to_conversation_memory("Previous query", "Previous response")
+        self.recommender.add_conversation_interaction("Previous query", "Previous response")
         
         # Query with context
         result_with_context = self.recommender.process_nl_query_with_context(query)
@@ -336,8 +337,9 @@ def test_entity_extraction():
         os.environ['SKIP_HEAVY_INITIALIZATION'] = 'true'
         
         recommender = HuggingFaceNLPRecommender(
-            db_connection=None,
-            skip_model_loading=True  # Skip actual model loading for unit tests
+            None,  # dbcon as positional argument
+            use_quantization=False,  # Disable for tests
+            device='cpu'  # Force CPU for tests
         )
         
         print("✅ HuggingFace recommender initialized for entity extraction tests")
@@ -470,7 +472,11 @@ def test_nlp_recommender():
         
         # Initialize HuggingFace NLP Recommender
         os.environ['USE_HUGGINGFACE_NLP'] = 'true'
-        recommender = HuggingFaceNLPRecommender(db_connection=conn)
+        recommender = HuggingFaceNLPRecommender(
+            conn,  # dbcon as positional argument
+            use_quantization=False,  # Disable for tests
+            device='cpu'  # Force CPU for tests
+        )
         
         print("✅ HuggingFace NLP Recommender initialized successfully")
         
