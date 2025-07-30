@@ -513,13 +513,11 @@ The system includes comprehensive test coverage across core components:
 
 The system uses a containerized architecture for easy deployment:
 
-```yaml
 ```
 services:
   postgres:        # PostgreSQL with pgvector extension for vector database operations
   app:             # Main FastAPI application with HuggingFace ML models
   gradio:          # Interactive Gradio web interface
-```
 ```
 
 ### Container Features
