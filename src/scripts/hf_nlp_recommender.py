@@ -15,6 +15,8 @@ import torch
 import json
 import re
 from datetime import datetime
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 # HuggingFace imports
 from transformers import (
@@ -754,9 +756,25 @@ class HuggingFaceNLPRecommender:
         if not self.embedding_model:
             logger.warning("Embedding model not available, returning empty results")
             return []
-        
+
         try:
-            # Get semantic query embeddings
+            # Check if we have theme filters to prioritize
+            filters = processed_query.get('filters', {})
+            themes = filters.get('themes', [])
+            
+            if themes:
+                # Search specifically for sets in the requested themes first
+                results = self._query_by_themes(themes, top_k)
+                if results:
+                    # Apply other filters to theme-based results
+                    filtered_results = self._apply_filters(results, filters)
+                    for result in filtered_results:
+                        result['confidence'] = processed_query['confidence']
+                        result['intent'] = processed_query['intent']
+                        result['relevance_score'] = 0.9  # Higher relevance for theme matches
+                    return filtered_results[:top_k]
+            
+            # Fallback to general search if no theme-specific results
             semantic_query = processed_query['semantic_query']
             query_embedding = self.embedding_model.encode([semantic_query])
             
@@ -764,7 +782,7 @@ class HuggingFaceNLPRecommender:
             results = self._query_vector_database(query_embedding[0], top_k)
             
             # Apply filters
-            filtered_results = self._apply_filters(results, processed_query['filters'])
+            filtered_results = self._apply_filters(results, filters)
             
             # Add confidence and intent to results
             for result in filtered_results:
@@ -777,12 +795,95 @@ class HuggingFaceNLPRecommender:
             logger.error(f"Search failed: {e}")
             return []
     
+    def _query_by_themes(self, themes: List[str], top_k: int) -> List[Dict]:
+        """Query sets specifically by theme names"""
+        try:
+            cursor = self.dbconn.cursor(cursor_factory=RealDictCursor)
+            
+            # Create a case-insensitive theme query
+            theme_conditions = []
+            params = []
+            for theme in themes:
+                theme_conditions.append("LOWER(t.name) LIKE LOWER(%s)")
+                params.append(f"%{theme}%")
+            
+            query = f"""
+                SELECT s.set_num, s.name, s.year, s.num_parts, s.img_url,
+                       t.name as theme_name, t.id as theme_id
+                FROM sets s
+                LEFT JOIN themes t ON s.theme_id = t.id
+                WHERE s.num_parts IS NOT NULL 
+                AND s.num_parts > 50
+                AND s.year >= 2000
+                AND ({' OR '.join(theme_conditions)})
+                ORDER BY s.num_parts DESC, s.year DESC
+                LIMIT %s
+            """
+            
+            params.append(top_k * 2)  # Get more for variety
+            cursor.execute(query, params)
+            
+            results = []
+            for row in cursor.fetchall():
+                result = {
+                    'set_num': row['set_num'],
+                    'name': row['name'], 
+                    'year': row['year'],
+                    'num_parts': row['num_parts'],
+                    'theme': row['theme_name'] or 'Generic',
+                    'theme_id': row['theme_id'],
+                    'img_url': row['img_url'],
+                    'relevance_score': 0.9  # High relevance for theme matches
+                }
+                results.append(result)
+            
+            cursor.close()
+            return results
+            
+        except Exception as e:
+            logger.error(f"Theme query failed: {e}")
+            return []
+
     def _query_vector_database(self, query_embedding: np.ndarray, top_k: int) -> List[Dict]:
         """Query the vector database for similar LEGO sets"""
-        # This would interface with your PostgreSQL pgvector database
-        # For now, return a placeholder
-        # TODO: Implement actual vector search
-        return []
+        try:
+            # For now, perform a simple database query to get real LEGO sets
+            # TODO: Implement semantic vector search with embeddings
+            cursor = self.dbconn.cursor(cursor_factory=RealDictCursor)
+            
+            # Get random popular sets as a basic implementation
+            cursor.execute("""
+                SELECT s.set_num, s.name, s.year, s.num_parts, s.img_url,
+                       t.name as theme_name, t.id as theme_id
+                FROM sets s
+                LEFT JOIN themes t ON s.theme_id = t.id
+                WHERE s.num_parts IS NOT NULL 
+                AND s.num_parts > 50
+                AND s.year >= 2005
+                ORDER BY RANDOM()
+                LIMIT %s
+            """, (top_k * 3,))  # Get more than needed for variety
+            
+            results = []
+            for row in cursor.fetchall():
+                result = {
+                    'set_num': row['set_num'],
+                    'name': row['name'],
+                    'year': row['year'],
+                    'num_parts': row['num_parts'],
+                    'theme': row['theme_name'] or 'Generic',
+                    'theme_id': row['theme_id'],
+                    'img_url': row['img_url'],
+                    'relevance_score': 0.8  # Default relevance for now
+                }
+                results.append(result)
+            
+            cursor.close()
+            return results[:top_k]
+            
+        except Exception as e:
+            logger.error(f"Database query failed: {e}")
+            return []
     
     def _apply_filters(self, results: List[Dict], filters: Dict[str, Any]) -> List[Dict]:
         """Apply filters to search results"""

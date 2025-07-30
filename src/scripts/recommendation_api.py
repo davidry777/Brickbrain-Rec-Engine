@@ -1432,19 +1432,42 @@ async def conversational_recommendations(
                 # Process the current query
                 processed_query = hf_nlp_recommender.process_natural_language_query(conv_query.query)
                 
-                # Build a simple conversational response
+                # Get actual recommendations from the database
+                search_results = hf_nlp_recommender.search_recommendations(processed_query, top_k=5)
+                
+                # If no results, fall back to a basic query
+                if not search_results:
+                    # Get some default sets as fallback
+                    cursor = db.cursor(cursor_factory=RealDictCursor)
+                    cursor.execute("""
+                        SELECT s.set_num, s.name, s.year, s.num_parts, s.img_url,
+                               t.name as theme_name
+                        FROM sets s
+                        LEFT JOIN themes t ON s.theme_id = t.id
+                        WHERE s.num_parts IS NOT NULL 
+                        AND s.num_parts > 100
+                        AND s.year >= 2015
+                        ORDER BY s.num_parts DESC, RANDOM()
+                        LIMIT 5
+                    """)
+                    
+                    search_results = []
+                    for row in cursor.fetchall():
+                        search_results.append({
+                            'set_num': row['set_num'],
+                            'name': row['name'],
+                            'year': row['year'],
+                            'num_parts': row['num_parts'],
+                            'theme': row['theme_name'] or 'Generic',
+                            'img_url': row['img_url'],
+                            'relevance_score': 0.7
+                        })
+                    cursor.close()
+                
+                # Build conversational response
                 response = {
                     "type": "conversational_recommendation",
-                    "results": [
-                        {
-                            "set_num": "demo-1",
-                            "name": "Demo LEGO Set",
-                            "theme": "Generic",
-                            "year": 2024,
-                            "num_parts": 500,
-                            "relevance_score": 0.9
-                        }
-                    ],
+                    "results": search_results,
                     "intent": processed_query.get('intent', 'search'),
                     "confidence": processed_query.get('confidence', 0.8),
                     "follow_up_questions": [
