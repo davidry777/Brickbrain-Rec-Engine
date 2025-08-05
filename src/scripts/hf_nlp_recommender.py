@@ -1,10 +1,3 @@
-"""
-HuggingFace-based NLP Recommender for LEGO recommendation system
-
-This module provides natural language processing capabilities using HuggingFace models
-instead of Ollama, optimized for LEGO-specific queries and conversational AI.
-"""
-
 import os
 import logging
 from typing import List, Dict, Optional, Any, Tuple

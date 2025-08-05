@@ -1,18 +1,3 @@
-"""
-Hard Constraint Filtering System for LEGO Recommendation Engine
-
-This module implements strict, non-negotiable filtering constraints that must be met
-before any recommendations are returned. Unlike soft filtering that influences scoring,
-hard constraints are absolute barriers that exclude results.
-
-Key Features:
-- Absolute constraint enforcement (no fuzzy matching)
-- Multiple constraint types (price, age, pieces, themes, availability)
-- Constraint validation and feedback
-- Performance-optimized database filtering
-- Clear constraint violation reporting
-"""
-
 import logging
 from typing import List, Dict, Any, Optional, Tuple, Set
 from dataclasses import dataclass

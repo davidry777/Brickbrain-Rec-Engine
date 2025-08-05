@@ -1,11 +1,3 @@
-"""
-Advanced Conversation Memory System for HuggingFace LEGO NLP Recommender
-
-This module provides sophisticated conversation memory capabilities optimized
-for HuggingFace models, including context summarization, preference learning,
-and multi-turn dialogue support.
-"""
-
 import logging
 import json
 import sqlite3
