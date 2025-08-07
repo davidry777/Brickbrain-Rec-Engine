@@ -28,19 +28,32 @@ logger = logging.getLogger(__name__)
 
 def setup_database_connection():
     """Set up database connection"""
+    # Validate required environment variables
+    required_vars = ["DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD"]
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+    
+    if missing_vars:
+        logger.warning(f"Missing environment variables: {missing_vars}, using defaults")
+    
     db_params = {
         "host": os.getenv("DB_HOST", "localhost"),
         "database": os.getenv("DB_NAME", "brickbrain"),
         "user": os.getenv("DB_USER", "brickbrain"),
-        "password": os.getenv("DB_PASSWORD", "brickbrain_password"),
+        "password": os.getenv("DB_PASSWORD"),
         "port": int(os.getenv("DB_PORT", 5432))
     }
     
+    if not db_params["password"]:
+        raise ValueError("DB_PASSWORD environment variable is required")
+    
     try:
         conn = psycopg2.connect(**db_params)
+        # Test connection
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT 1")
         logger.info("✅ Connected to database")
         return conn
-    except Exception as e:
+    except psycopg2.Error as e:
         logger.error(f"❌ Failed to connect to database: {e}")
         raise
 
@@ -67,16 +80,20 @@ def demo_scenario_1_budget_constraint(constraint_filter: HardConstraintFilter):
     
     # Show sample results
     if result.valid_set_nums:
-        conn = constraint_filter.dbcon
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute("""
-            SELECT s.set_num, s.name, s.num_parts, t.name as theme_name, s.year
-            FROM sets s
-            LEFT JOIN themes t ON s.theme_id = t.id
-            WHERE s.set_num = ANY(%s)
-            ORDER BY s.num_parts DESC
-            LIMIT 5
-        """, [result.valid_set_nums])
+     # Show sample results
+     if result.valid_set_nums:
+         conn = constraint_filter.dbcon
+         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+             cursor.execute("""
+                 SELECT s.set_num, s.name, s.num_parts, t.name as theme_name, s.year
+                 FROM sets s
+                 LEFT JOIN themes t ON s.theme_id = t.id
+                 WHERE s.set_num = ANY(%s)
+                 ORDER BY s.num_parts DESC
+                 LIMIT 5
+             """, [result.valid_set_nums])
+ 
+             samples = cursor.fetchall()
         
         samples = cursor.fetchall()
         print("\n📦 Sample budget-friendly sets:")
@@ -219,30 +236,35 @@ def demo_scenario_5_hybrid_recommendations(hybrid_recommender: HybridRecommender
     )
     
     try:
-        recommendations, constraint_result = hybrid_recommender.get_recommendations_from_request(request)
-        
-        print(f"🎯 Recommendation request with constraints:")
-        print(f"   🔢 Pieces: 200-1500")
-        print(f"   👶 Age: 10+")
-        print(f"   🎨 Themes: City, Creator, Friends")
-        print(f"   🧩 Complexity: Moderate or simpler")
-        
-        print(f"\n📊 Constraint application results:")
-        if constraint_result:
-            print(f"   🔒 Constraints applied: {len(constraint_result.applied_constraints)}")
-            print(f"   ✅ Valid sets found: {len(constraint_result.valid_set_nums)}")
-            print(f"   ⏱️ Filter time: {constraint_result.performance_stats.get('filter_time_ms', 0):.2f}ms")
-        
-        print(f"\n🎉 Final recommendations: {len(recommendations)}")
-        for i, rec in enumerate(recommendations, 1):
-            print(f"   {i}. {rec.name}")
-            print(f"      Theme: {rec.theme_name}, {rec.num_parts} pieces, {rec.year}")
-            print(f"      Score: {rec.score:.3f}")
-            print(f"      Reasons: {', '.join(rec.reasons[:2])}")
+        try:
+            recommendations, constraint_result = hybrid_recommender.get_recommendations_from_request(request)
             
-    except Exception as e:
-        print(f"❌ Hybrid recommendation demo failed: {e}")
-        logger.error(f"Hybrid recommendation error: {e}")
+            print(f"🎯 Recommendation request with constraints:")
+            print(f"   🔢 Pieces: 200-1500")
+            print(f"   👶 Age: 10+")
+            print(f"   🎨 Themes: City, Creator, Friends")
+            print(f"   🧩 Complexity: Moderate or simpler")
+            
+            print(f"\n📊 Constraint application results:")
+            if constraint_result:
+                print(f"   🔒 Constraints applied: {len(constraint_result.applied_constraints)}")
+                print(f"   ✅ Valid sets found: {len(constraint_result.valid_set_nums)}")
+                print(f"   ⏱️ Filter time: {constraint_result.performance_stats.get('filter_time_ms', 0):.2f}ms")
+            
+            print(f"\n🎉 Final recommendations: {len(recommendations)}")
+            for i, rec in enumerate(recommendations, 1):
+                print(f"   {i}. {rec.name}")
+                print(f"      Theme: {rec.theme_name}, {rec.num_parts} pieces, {rec.year}")
+                print(f"      Score: {rec.score:.3f}")
+                print(f"      Reasons: {', '.join(rec.reasons[:2])}")
+                
+        except (AttributeError, ValueError) as e:
+            print(f"❌ Hybrid recommendation demo failed: {e}")
+            logger.error(f"Hybrid recommendation error: {e}")
+        except Exception as e:
+            print(f"❌ Unexpected error in hybrid recommendation demo: {e}")
+            logger.error(f"Unexpected hybrid recommendation error: {e}")
+            raise  # Re-raise unexpected errors for debugging
 
 def demo_performance_comparison(constraint_filter: HardConstraintFilter):
     """Demo: Performance comparison of different constraint types"""
@@ -296,9 +318,10 @@ def main():
         hybrid_recommender = HybridRecommender(conn)
         
         # Check database has data
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM sets WHERE num_parts > 0")
-        set_count = cursor.fetchone()[0]
+        # Check database has data
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM sets WHERE num_parts > 0")
+            set_count = cursor.fetchone()[0]
         
         if set_count == 0:
             print("❌ No LEGO sets found in database. Please load data first.")
@@ -335,7 +358,12 @@ def main():
     
     finally:
         if 'conn' in locals():
-            conn.close()
+            try:
+                conn.close()
+                logger.info("✅ Database connection closed successfully")
+            except Exception as close_error:
+                logger.error(f"⚠️ Error closing database connection: {close_error}")
+                # Don't re-raise the exception to avoid masking the original error
 
 if __name__ == "__main__":
     main()

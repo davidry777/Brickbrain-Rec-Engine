@@ -581,7 +581,10 @@ class RecommendationSystemTester:
         
         print(f"   🏃 First run: {time1:.2f}ms")
         print(f"   🏃 Cached run: {time2:.2f}ms")
-        print(f"   📈 Cache improvement: {((time1 - time2) / time1 * 100):.1f}%")
+        if time1 > 0:
+            print(f"   📈 Cache improvement: {((time1 - time2) / time1 * 100):.1f}%")
+        else:
+            print(f"   📈 Cache improvement: N/A (operation too fast to measure)")
         
         # Performance report
         performance_report = self.constraint_filter.get_performance_report()

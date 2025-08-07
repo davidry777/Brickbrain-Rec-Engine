@@ -229,19 +229,26 @@ class HardConstraintFilter:
             ))
         
         # User-specific constraints
-        if exclude_owned and user_id:
-            constraints.append(HardConstraint(
-                ConstraintType.EXCLUDE_OWNED,
-                user_id,
-                description="Must not be in user's collection"
-            ))
-            
-        if exclude_wishlisted and user_id:
-            constraints.append(HardConstraint(
-                ConstraintType.EXCLUDE_WISHLISTED,
-                user_id,
-                description="Must not be in user's wishlist"
-            ))
+        # User-specific constraints
+        if exclude_owned:
+            if not user_id:
+                logger.warning("exclude_owned requires user_id, constraint will be ignored")
+            else:
+                constraints.append(HardConstraint(
+                    ConstraintType.EXCLUDE_OWNED,
+                    user_id,
+                    description="Must not be in user's collection"
+                ))
+        
+        if exclude_wishlisted:
+            if not user_id:
+                logger.warning("exclude_wishlisted requires user_id, constraint will be ignored")
+            else:
+                constraints.append(HardConstraint(
+                    ConstraintType.EXCLUDE_WISHLISTED,
+                    user_id,
+                    description="Must not be in user's wishlist"
+                ))
         
         # Availability constraint
         if must_be_available:
@@ -405,7 +412,7 @@ class HardConstraintFilter:
             # Get theme IDs for excluded themes
             theme_ids = self._get_theme_ids(value)
             if theme_ids:
-                return "s.theme_id NOT IN %s", [tuple(theme_ids)]
+                return "NOT (s.theme_id = ANY(%s))", [theme_ids]
             else:
                 # No matching themes to exclude - no constraint needed
                 return "", []
@@ -472,13 +479,14 @@ class HardConstraintFilter:
         # Default: no constraint
         return "", []
     
-    def _get_theme_ids(self, theme_names: List[str]) -> List[int]:
+    def _get_theme_ids(self, theme_names: List[str], exact_match: bool = False) -> List[int]:
         """
         Get theme IDs from theme names with caching
-        
+
         Args:
             theme_names: List of theme names
-            
+            exact_match: If True, use exact matching instead of fuzzy
+
         Returns:
             List of matching theme IDs
         """
@@ -495,8 +503,12 @@ class HardConstraintFilter:
             params = []
             
             for theme_name in theme_names:
-                theme_conditions.append("LOWER(name) LIKE LOWER(%s)")
-                params.append(f"%{theme_name}%")
+                if exact_match:
+                    theme_conditions.append("LOWER(name) = LOWER(%s)")
+                    params.append(theme_name)
+                else:
+                    theme_conditions.append("LOWER(name) LIKE LOWER(%s)")
+                    params.append(f"%{theme_name}%")
             
             query = f"""
             SELECT id, name FROM themes 
@@ -648,12 +660,22 @@ class HardConstraintFilter:
         self._constraint_cache.clear()
         self._theme_cache.clear()
         self._set_metadata_cache.clear()
-        logger.info("🧹 Hard constraint filter caches cleared")
-
-# Utility functions for common constraint patterns
-
 def create_budget_constraints(budget_max: float, budget_min: float = None) -> List[HardConstraint]:
     """Create price-based constraints for budget filtering"""
+    constraints = []
+    if budget_max is not None:
+        constraints.append(HardConstraint(
+            ConstraintType.PRICE_MAX,
+            budget_max,
+            description=f"Budget limit: ${budget_max:.2f}"
+        ))
+    if budget_min is not None:
+        constraints.append(HardConstraint(
+            ConstraintType.PRICE_MIN,
+            budget_min,
+            description=f"Budget floor: ${budget_min:.2f}"
+        ))
+    return constraints
     constraints = []
     if budget_max:
         constraints.append(HardConstraint(

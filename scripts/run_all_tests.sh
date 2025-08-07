@@ -200,13 +200,15 @@ fi
 # Quick hard constraint filtering validation
 echo -e "\n${BLUE}🔒 Hard Constraint Filtering Validation${NC}"
 if docker-compose ps app | grep -q "Up"; then
-    if docker-compose exec -T app conda run -n brickbrain-rec python -c "
-import sys
-sys.path.insert(0, '/app/src/scripts')
+    if docker-compose exec -T app conda run -n brickbrain-rec python - <<'PY' \
+        > /tmp/constraint_test 2>&1
 from hard_constraint_filter import ConstraintType, HardConstraint
-constraint = HardConstraint(ConstraintType.PRICE_MAX, 100.0, 'Test constraint')
+
+# Smoke-test: should instantiate without raising.
+_ = HardConstraint(ConstraintType.PRICE_MAX, 100.0, 'Test constraint')
 print('✅ Hard constraint filtering validated')
-" > /tmp/constraint_test 2>&1; then
+PY
+    then
         print_status "Hard constraint filtering is working"
     else
         print_error "Hard constraint filtering validation failed"

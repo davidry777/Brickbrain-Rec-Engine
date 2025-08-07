@@ -8,15 +8,15 @@ import logging
 from datetime import datetime
 import os
 import hashlib
+import time
 from contextlib import contextmanager, asynccontextmanager
 import asyncio
-import time
 from functools import wraps
 
 # Import our recommendation system with hard constraints
 from recommendation_system import (
     HybridRecommender, RecommendationResult, UserProfile, 
-    RecommendationRequest
+    RecommendationRequest as InternalRecommendationRequest
 )
 from hard_constraint_filter import (
     HardConstraintFilter, HardConstraint, ConstraintResult,
@@ -317,16 +317,6 @@ class UserRegistrationRequest(BaseModel):
     email: str = Field(..., pattern=r"^[\w\.-]+@[\w\.-]+\.\w+$")
     password: str = Field(..., min_length=6)
 
-class RecommendationResponse(BaseModel):
-    set_num: str
-    name: str
-    score: float
-    reasons: List[str]
-    theme_name: str
-    year: int
-    num_parts: int
-    img_url: Optional[str]
-
 class UserProfileResponse(BaseModel):
     user_id: int
     username: str
@@ -527,7 +517,7 @@ async def get_constrained_recommendations(
         logger.info(f"🔒 Processing constrained recommendation request with {sum(1 for field in [request.price_max, request.price_min, request.pieces_max, request.pieces_min, request.age_min, request.age_max, request.year_min, request.year_max, request.required_themes, request.excluded_themes] if field is not None)} constraints")
 
         # Convert request to internal RecommendationRequest format
-        internal_request = RecommendationRequest(
+        internal_request = InternalRecommendationRequest(
             user_id=request.user_id,
             liked_set=request.set_num,
             top_k=request.top_k,

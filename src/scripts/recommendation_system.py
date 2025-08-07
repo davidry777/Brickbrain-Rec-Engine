@@ -683,26 +683,36 @@ class HybridRecommender:
         :param request: RecommendationRequest with all parameters
         :return: Tuple of (recommendations, constraint_result)
         """
-        # Create hard constraints from request
-        constraints = self.constraint_filter.create_constraint_set(
-            price_max=request.price_max,
-            price_min=request.price_min,
-            pieces_max=request.pieces_max,
-            pieces_min=request.pieces_min,
-            age_min=request.age_min,
-            age_max=request.age_max,
-            year_min=request.year_min,
-            year_max=request.year_max,
-            required_themes=request.required_themes,
-            excluded_themes=request.excluded_themes,
-            max_complexity=request.max_complexity,
-            min_complexity=request.min_complexity,
-            must_be_available=request.must_be_available,
-            exclude_owned=request.exclude_owned,
-            exclude_wishlisted=request.exclude_wishlisted,
-            user_id=request.user_id
-        )
-        
+        try:
+            # Create hard constraints from request
+            constraints = self.constraint_filter.create_constraint_set(
+                price_max=request.price_max,
+                price_min=request.price_min,
+                pieces_max=request.pieces_max,
+                pieces_min=request.pieces_min,
+                age_min=request.age_min,
+                age_max=request.age_max,
+                year_min=request.year_min,
+                year_max=request.year_max,
+                required_themes=request.required_themes,
+                excluded_themes=request.excluded_themes,
+                max_complexity=request.max_complexity,
+                min_complexity=request.min_complexity,
+                must_be_available=request.must_be_available,
+                exclude_owned=request.exclude_owned,
+                exclude_wishlisted=request.exclude_wishlisted,
+                user_id=request.user_id
+            )
+        except Exception as e:
+            logger.error(f"Failed to create constraints: {e}")
+            error_result = ConstraintResult(
+                valid_set_nums=[],
+                violations=[],
+                total_candidates=0,
+                total_valid=0
+            )
+            return [], error_result
+
         return self.get_recommendations(
             user_id=request.user_id,
             liked_set=request.liked_set,
@@ -733,8 +743,9 @@ class HybridRecommender:
         
         # Add constraint filter if provided
         if valid_set_nums:
-            base_query += " AND s.set_num = ANY(%s)"
-            params.append(valid_set_nums)
+            placeholders = ','.join(['%s'] * len(valid_set_nums))
+            base_query += f" AND s.set_num IN ({placeholders})"
+            params.extend(valid_set_nums)
         
         base_query += """
         GROUP BY s.set_num, s.name, s.year, s.num_parts, s.img_url, t.name
