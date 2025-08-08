@@ -8,13 +8,20 @@ import logging
 from datetime import datetime
 import os
 import hashlib
+import time
 from contextlib import contextmanager, asynccontextmanager
 import asyncio
-import time
 from functools import wraps
 
-# Import our recommendation system
-from recommendation_system import HybridRecommender, RecommendationResult, UserProfile
+# Import our recommendation system with hard constraints
+from recommendation_system import (
+    HybridRecommender, RecommendationResult, UserProfile, 
+    RecommendationRequest as InternalRecommendationRequest
+)
+from hard_constraint_filter import (
+    HardConstraintFilter, HardConstraint, ConstraintResult,
+    ConstraintType, create_budget_constraints, create_age_appropriate_constraints
+)
 from lego_nlp_recommeder import NLPRecommender, NLQueryResult
 
 # Import HuggingFace-based NLP system
@@ -237,6 +244,61 @@ class RecommendationRequest(BaseModel):
     recommendation_type: str = Field("hybrid", pattern="^(content|collaborative|hybrid)$")
     include_reasons: bool = True
 
+class EnhancedRecommendationRequest(BaseModel):
+    """Enhanced recommendation request with hard constraint support"""
+    user_id: Optional[int] = None
+    set_num: Optional[str] = None
+    top_k: int = Field(10, ge=1, le=50)
+    recommendation_type: str = Field("hybrid", pattern="^(content|collaborative|hybrid)$")
+    include_reasons: bool = True
+    
+    # Hard constraints
+    price_max: Optional[float] = Field(None, ge=0, description="Maximum price constraint")
+    price_min: Optional[float] = Field(None, ge=0, description="Minimum price constraint")
+    pieces_max: Optional[int] = Field(None, ge=1, description="Maximum piece count constraint")
+    pieces_min: Optional[int] = Field(None, ge=1, description="Minimum piece count constraint")
+    age_min: Optional[int] = Field(None, ge=1, le=99, description="Minimum age constraint")
+    age_max: Optional[int] = Field(None, ge=1, le=99, description="Maximum age constraint")
+    year_min: Optional[int] = Field(None, ge=1950, description="Minimum release year")
+    year_max: Optional[int] = Field(None, le=2030, description="Maximum release year")
+    required_themes: Optional[List[str]] = Field(None, description="Required theme names")
+    excluded_themes: Optional[List[str]] = Field(None, description="Excluded theme names")
+    max_complexity: Optional[str] = Field(None, pattern="^(simple|moderate|complex)$", description="Maximum complexity level")
+    min_complexity: Optional[str] = Field(None, pattern="^(simple|moderate|complex)$", description="Minimum complexity level")
+    must_be_available: bool = Field(False, description="Must be currently available")
+    exclude_owned: bool = Field(False, description="Exclude sets owned by user")
+    exclude_wishlisted: bool = Field(False, description="Exclude sets in user's wishlist")
+    
+    # Soft preferences (for future use)
+    preferred_themes: Optional[List[str]] = Field(None, description="Preferred themes for scoring boost")
+    budget_preference: Optional[float] = Field(None, ge=0, description="Budget preference for scoring")
+
+class RecommendationResponse(BaseModel):
+    set_num: str
+    name: str
+    score: float
+    reasons: List[str]
+    theme_name: str
+    year: int
+    num_parts: int
+    img_url: Optional[str]
+    constraint_violations: Optional[List[str]] = None  # For constraint feedback
+
+class ConstraintViolationResponse(BaseModel):
+    """Information about constraint violations"""
+    constraint_description: str
+    violating_count: int
+    total_count: int
+    elimination_rate: float
+    suggested_alternatives: List[str]
+
+class EnhancedRecommendationResponse(BaseModel):
+    """Enhanced response with constraint information"""
+    recommendations: List[RecommendationResponse]
+    constraint_summary: Dict[str, Any]
+    violations: List[ConstraintViolationResponse]
+    performance_stats: Dict[str, Any]
+
 class SetSearchRequest(BaseModel):
     query: Optional[str] = None
     theme_ids: Optional[List[int]] = []
@@ -254,16 +316,6 @@ class UserRegistrationRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: str = Field(..., pattern=r"^[\w\.-]+@[\w\.-]+\.\w+$")
     password: str = Field(..., min_length=6)
-
-class RecommendationResponse(BaseModel):
-    set_num: str
-    name: str
-    score: float
-    reasons: List[str]
-    theme_name: str
-    year: int
-    num_parts: int
-    img_url: Optional[str]
 
 class UserProfileResponse(BaseModel):
     user_id: int
@@ -443,6 +495,106 @@ async def get_recommendations(
 
     except Exception as e:
         logger.error(f"Error generating recommendations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Enhanced recommendation endpoint with hard constraints
+@app.post("/recommendations/constrained", response_model=EnhancedRecommendationResponse)
+@time_request
+async def get_constrained_recommendations(
+    request: EnhancedRecommendationRequest,
+    db: psycopg2.extensions.connection = Depends(get_db)
+):
+    """
+    Get personalized recommendations with hard constraint filtering
+    
+    This endpoint applies strict, non-negotiable constraints before generating recommendations.
+    All returned recommendations are guaranteed to meet ALL specified constraints.
+    """
+    try:
+        if not recommendation_engine:
+            raise HTTPException(status_code=500, detail="Recommendation engine not initialized")
+
+        logger.info(f"🔒 Processing constrained recommendation request with {sum(1 for field in [request.price_max, request.price_min, request.pieces_max, request.pieces_min, request.age_min, request.age_max, request.year_min, request.year_max, request.required_themes, request.excluded_themes] if field is not None)} constraints")
+
+        # Convert request to internal RecommendationRequest format
+        internal_request = InternalRecommendationRequest(
+            user_id=request.user_id,
+            liked_set=request.set_num,
+            top_k=request.top_k,
+            price_max=request.price_max,
+            price_min=request.price_min,
+            pieces_max=request.pieces_max,
+            pieces_min=request.pieces_min,
+            age_min=request.age_min,
+            age_max=request.age_max,
+            year_min=request.year_min,
+            year_max=request.year_max,
+            required_themes=request.required_themes,
+            excluded_themes=request.excluded_themes,
+            max_complexity=request.max_complexity,
+            min_complexity=request.min_complexity,
+            must_be_available=request.must_be_available,
+            exclude_owned=request.exclude_owned,
+            exclude_wishlisted=request.exclude_wishlisted,
+            preferred_themes=request.preferred_themes,
+            budget_preference=request.budget_preference
+        )
+
+        # Generate constrained recommendations
+        recommendations, constraint_result = recommendation_engine.get_recommendations_from_request(internal_request)
+
+        # Convert to response format
+        response_recs = [
+            RecommendationResponse(
+                set_num=rec.set_num,
+                name=rec.name,
+                score=rec.score,
+                reasons=rec.reasons if request.include_reasons else [],
+                theme_name=rec.theme_name,
+                year=rec.year,
+                num_parts=rec.num_parts,
+                img_url=rec.img_url,
+                constraint_violations=rec.constraint_violations
+            )
+            for rec in recommendations
+        ]
+
+        # Convert constraint violations to response format
+        violation_responses = []
+        if constraint_result and constraint_result.violations:
+            for violation in constraint_result.violations:
+                elimination_rate = violation.violating_count / max(violation.total_count, 1)
+                violation_responses.append(ConstraintViolationResponse(
+                    constraint_description=violation.constraint.description,
+                    violating_count=violation.violating_count,
+                    total_count=violation.total_count,
+                    elimination_rate=elimination_rate,
+                    suggested_alternatives=violation.suggested_alternatives or []
+                ))
+
+        # Build constraint summary
+        constraint_summary = {
+            "total_constraints_applied": len(constraint_result.applied_constraints) if constraint_result else 0,
+            "valid_sets_found": len(constraint_result.valid_set_nums) if constraint_result else 0,
+            "recommendations_returned": len(response_recs),
+            "constraint_sql_generated": constraint_result.constraint_sql if constraint_result else "",
+            "filtering_effective": len(response_recs) > 0
+        }
+
+        # Performance stats
+        performance_stats = constraint_result.performance_stats if constraint_result else {}
+
+        performance_monitor.record_recommendation()
+
+        return EnhancedRecommendationResponse(
+            recommendations=response_recs,
+            constraint_summary=constraint_summary,
+            violations=violation_responses,
+            performance_stats=performance_stats
+        )
+
+    except Exception as e:
+        logger.error(f"Error generating constrained recommendations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/users/{user_id}/interactions")
@@ -928,8 +1080,218 @@ async def health_check(db: psycopg2.extensions.connection = Depends(get_db)):
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail=f"Health check failed: {e}")
+
+# Enhanced Natural Language Search with Hard Constraints
+@app.post("/search/natural/constrained", response_model=EnhancedRecommendationResponse)
+@time_request
+async def natural_language_search_constrained(
+    nl_query: NaturalLanguageQuery,
+    user_id: Optional[int] = Query(None, description="User ID for personalized constraints"),
+    db: psycopg2.extensions.connection = Depends(get_db)
+):
+    """
+    Advanced natural language search with hard constraint enforcement.
     
-# Natural Language Search Endpoint
+    This endpoint extracts hard constraints from natural language and applies them strictly.
+    No recommendations will violate the constraints specified in the query.
+    
+    Examples:
+    - "LEGO sets under $50 for my 8-year-old nephew" (enforces price_max=50, age_min=6, age_max=10)
+    - "Star Wars sets with more than 1000 pieces" (enforces themes=['Star Wars'], pieces_min=1000) 
+    - "Simple builds released after 2020" (enforces max_complexity='simple', year_min=2020)
+    - "Architecture sets but not Technic" (enforces required_themes=['Architecture'], excluded_themes=['Technic'])
+    """
+    try:
+        if not recommendation_engine:
+            raise HTTPException(status_code=500, detail="Recommendation engine not initialized")
+            
+        if not hf_nlp_recommender:
+            raise HTTPException(status_code=500, detail="Natural language processor not initialized")
+
+        logger.info(f"🔍 Processing constrained NL search: '{nl_query.query}'")
+
+        # Extract entities and filters from natural language query
+        entities, filters = hf_nlp_recommender.extract_entities_and_filters(nl_query.query)
+        
+        logger.info(f"📊 Extracted filters: {filters}")
+        logger.info(f"🏷️ Extracted entities: {entities}")
+
+        # Convert NLP filters to hard constraints
+        constraints = []
+        
+        # Price constraints
+        if filters.get('price_range') and len(filters['price_range']) >= 2:
+            if filters['price_range'][0] > 0:
+                constraints.append(HardConstraint(
+                    ConstraintType.PRICE_MIN,
+                    filters['price_range'][0],
+                    description=f"Budget minimum: ${filters['price_range'][0]:.2f}"
+                ))
+            constraints.append(HardConstraint(
+                ConstraintType.PRICE_MAX,
+                filters['price_range'][1],
+                description=f"Budget maximum: ${filters['price_range'][1]:.2f}"
+            ))
+        
+        # Piece count constraints
+        if filters.get('min_pieces'):
+            constraints.append(HardConstraint(
+                ConstraintType.PIECES_MIN,
+                filters['min_pieces'],
+                description=f"Minimum {filters['min_pieces']} pieces"
+            ))
+        if filters.get('max_pieces'):
+            constraints.append(HardConstraint(
+                ConstraintType.PIECES_MAX,
+                filters['max_pieces'],
+                description=f"Maximum {filters['max_pieces']} pieces"
+            ))
+        
+        # Age constraints
+        if filters.get('min_age'):
+            constraints.append(HardConstraint(
+                ConstraintType.AGE_MIN,
+                filters['min_age'],
+                description=f"Suitable for age {filters['min_age']}+"
+            ))
+        if filters.get('max_age'):
+            constraints.append(HardConstraint(
+                ConstraintType.AGE_MAX,
+                filters['max_age'],
+                description=f"Suitable for ages up to {filters['max_age']}"
+            ))
+        
+        # Year constraints
+        if filters.get('year_range') and len(filters['year_range']) >= 2:
+            constraints.append(HardConstraint(
+                ConstraintType.YEAR_MIN,
+                filters['year_range'][0],
+                description=f"Released after {filters['year_range'][0]}"
+            ))
+            constraints.append(HardConstraint(
+                ConstraintType.YEAR_MAX,
+                filters['year_range'][1],
+                description=f"Released before {filters['year_range'][1]}"
+            ))
+        
+        # Theme constraints
+        if filters.get('themes'):
+            constraints.append(HardConstraint(
+                ConstraintType.THEMES_REQUIRED,
+                filters['themes'],
+                description=f"Must be from themes: {', '.join(filters['themes'])}"
+            ))
+        
+        # Complexity constraints
+        if entities.get('complexity'):
+            complexity = entities['complexity']
+            if complexity in ['beginner', 'simple']:
+                constraints.append(HardConstraint(
+                    ConstraintType.COMPLEXITY_MAX,
+                    'simple',
+                    description="Simple complexity level"
+                ))
+            elif complexity in ['advanced', 'complex']:
+                constraints.append(HardConstraint(
+                    ConstraintType.COMPLEXITY_MIN,
+                    'complex',
+                    description="Complex complexity level"
+                ))
+        
+        # User-specific constraints
+        if user_id:
+            # Could add exclude owned/wishlisted based on query analysis
+            exclude_owned_keywords = ['new', 'different', 'not owned', "don't have"]
+            if any(keyword in nl_query.query.lower() for keyword in exclude_owned_keywords):
+                constraints.append(HardConstraint(
+                    ConstraintType.EXCLUDE_OWNED,
+                    user_id,
+                    description="Exclude sets already owned"
+                ))
+
+        logger.info(f"🔒 Generated {len(constraints)} hard constraints from NL query")
+
+        # Apply constraints and get recommendations
+        constraint_result = recommendation_engine.constraint_filter.apply_constraints(constraints)
+        
+        if not constraint_result.valid_set_nums:
+            logger.warning("❌ No sets meet the specified constraints from natural language query")
+            return EnhancedRecommendationResponse(
+                recommendations=[],
+                constraint_summary={
+                    "total_constraints_applied": len(constraints),
+                    "valid_sets_found": 0,
+                    "recommendations_returned": 0,
+                    "filtering_effective": False,
+                    "natural_language_query": nl_query.query
+                },
+                violations=[ConstraintViolationResponse(
+                    constraint_description=v.constraint.description,
+                    violating_count=v.violating_count,
+                    total_count=v.total_count,
+                    elimination_rate=v.violating_count / max(v.total_count, 1),
+                    suggested_alternatives=v.suggested_alternatives or []
+                ) for v in constraint_result.violations],
+                performance_stats=constraint_result.performance_stats
+            )
+
+        # Get popular sets from the valid constraint pool 
+        recommendations = recommendation_engine._get_constrained_popular_sets(
+            top_k=nl_query.top_k or 10,
+            valid_set_nums=constraint_result.valid_set_nums
+        )
+
+        # Convert to response format
+        response_recs = [
+            RecommendationResponse(
+                set_num=rec.set_num,
+                name=rec.name,
+                score=rec.score,
+                reasons=rec.reasons + [f"Matches query: '{nl_query.query}'"],
+                theme_name=rec.theme_name,
+                year=rec.year,
+                num_parts=rec.num_parts,
+                img_url=rec.img_url
+            )
+            for rec in recommendations
+        ]
+
+        # Build enhanced response
+        constraint_summary = {
+            "total_constraints_applied": len(constraints),
+            "valid_sets_found": len(constraint_result.valid_set_nums),
+            "recommendations_returned": len(response_recs),
+            "filtering_effective": len(response_recs) > 0,
+            "natural_language_query": nl_query.query,
+            "extracted_entities": entities,
+            "extracted_filters": filters
+        }
+
+        violation_responses = [
+            ConstraintViolationResponse(
+                constraint_description=v.constraint.description,
+                violating_count=v.violating_count,
+                total_count=v.total_count,
+                elimination_rate=v.violating_count / max(v.total_count, 1),
+                suggested_alternatives=v.suggested_alternatives or []
+            )
+            for v in constraint_result.violations
+        ]
+
+        logger.info(f"✅ Constrained NL search returned {len(response_recs)} recommendations")
+
+        return EnhancedRecommendationResponse(
+            recommendations=response_recs,
+            constraint_summary=constraint_summary,
+            violations=violation_responses,
+            performance_stats=constraint_result.performance_stats
+        )
+
+    except Exception as e:
+        logger.error(f"❌ Error in constrained natural language search: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+# Original Natural Language Search Endpoint (maintained for backward compatibility)
 @app.post("/search/natural", response_model=NLSearchResponse)
 @time_request
 async def natural_language_search(

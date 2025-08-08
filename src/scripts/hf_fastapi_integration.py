@@ -1,10 +1,3 @@
-"""
-FastAPI Integration for HuggingFace-based LEGO NLP Recommender
-
-This module provides FastAPI endpoints that integrate with the new HuggingFace-based
-NLP system, replacing the Ollama dependency while maintaining API compatibility.
-"""
-
 from fastapi import FastAPI, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any

@@ -16,7 +16,12 @@ import os
 # Add the scripts directory to path
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'src', 'scripts'))
-from recommendation_system import HybridRecommender
+from recommendation_system import HybridRecommender, RecommendationRequest
+from hard_constraint_filter import (
+    HardConstraintFilter, HardConstraint, ConstraintResult,
+    ConstraintType, ConstraintSeverity, 
+    create_budget_constraints, create_age_appropriate_constraints, create_size_constraints
+)
 
 # Database configuration
 DATABASE_CONFIG = {
@@ -31,6 +36,7 @@ class RecommendationSystemTester:
     def __init__(self):
         self.conn = psycopg2.connect(**DATABASE_CONFIG)
         self.cursor = self.conn.cursor(cursor_factory=RealDictCursor)
+        self.constraint_filter = HardConstraintFilter(self.conn)
         
     def simulate_realistic_user_data(self, num_users=100, min_ratings_per_user=5, max_ratings_per_user=50):
         """
@@ -378,6 +384,311 @@ class RecommendationSystemTester:
             
         return monitoring_queries
     
+    def test_hard_constraint_filtering(self):
+        """Test hard constraint filtering functionality"""
+        print("\n🔒 Testing Hard Constraint Filtering...")
+        
+        # Test 1: Basic constraint creation and application
+        print("1. Basic constraint creation and application...")
+        constraints = [
+            HardConstraint(
+                ConstraintType.PIECES_MAX,
+                500,
+                description="Maximum 500 pieces"
+            ),
+            HardConstraint(
+                ConstraintType.YEAR_MIN,
+                2015,
+                description="Released after 2015"
+            )
+        ]
+        
+        result = self.constraint_filter.apply_constraints(constraints)
+        print(f"   ✅ Found {len(result.valid_set_nums)} sets meeting basic constraints")
+        print(f"   ⚡ Filter time: {result.performance_stats.get('filter_time_ms', 0):.2f}ms")
+        
+        # Test 2: Budget constraints
+        print("2. Testing budget constraints...")
+        budget_constraints = create_budget_constraints(budget_max=100.0, budget_min=20.0)
+        budget_result = self.constraint_filter.apply_constraints(budget_constraints)
+        print(f"   💰 Found {len(budget_result.valid_set_nums)} sets within budget ($20-$100)")
+        
+        # Test 3: Age-appropriate filtering
+        print("3. Testing age-appropriate filtering...")
+        age_constraints = create_age_appropriate_constraints(age=8, strict=True)
+        age_result = self.constraint_filter.apply_constraints(age_constraints)
+        print(f"   👶 Found {len(age_result.valid_set_nums)} sets appropriate for age 8+")
+        
+        # Test 4: Size constraints
+        print("4. Testing size constraints...")
+        size_constraints = create_size_constraints("medium")  # 200-800 pieces
+        size_result = self.constraint_filter.apply_constraints(size_constraints)
+        print(f"   📏 Found {len(size_result.valid_set_nums)} medium-sized sets")
+        
+        # Test 5: Theme constraints
+        print("5. Testing theme constraints...")
+        theme_constraints = [
+            HardConstraint(
+                ConstraintType.THEMES_REQUIRED,
+                ["Star Wars", "City", "Creator"],
+                description="Must be popular theme"
+            )
+        ]
+        theme_result = self.constraint_filter.apply_constraints(theme_constraints)
+        print(f"   🎭 Found {len(theme_result.valid_set_nums)} sets in popular themes")
+        
+        # Test 6: Multiple constraints together
+        print("6. Testing multiple constraints together...")
+        multi_constraints = self.constraint_filter.create_constraint_set(
+            price_max=150.0,
+            pieces_min=200,
+            pieces_max=1000,
+            age_min=8,
+            required_themes=["City", "Creator"],
+            year_min=2018
+        )
+        multi_result = self.constraint_filter.apply_constraints(multi_constraints)
+        print(f"   🔗 Applied {len(multi_constraints)} constraints")
+        print(f"   📊 Found {len(multi_result.valid_set_nums)} sets meeting all constraints")
+        
+        if multi_result.violations:
+            print(f"   ⚠️ {len(multi_result.violations)} constraint violations detected")
+            for violation in multi_result.violations[:2]:  # Show first 2
+                print(f"     🚫 {violation.message}")
+        
+        # Test 7: Overly restrictive constraints
+        print("7. Testing overly restrictive constraints...")
+        restrictive_constraints = [
+            HardConstraint(
+                ConstraintType.PIECES_MIN,
+                5000,  # Very high minimum
+                description="Minimum 5,000 pieces"
+            ),
+            HardConstraint(
+                ConstraintType.PRICE_MAX,
+                5.0,  # Very low maximum price
+                description="Maximum $5"
+            )
+        ]
+        restrictive_result = self.constraint_filter.apply_constraints(restrictive_constraints)
+        print(f"   🚧 Restrictive constraints: {len(restrictive_result.valid_set_nums)} sets found")
+        print(f"   💡 Violations with suggestions: {len(restrictive_result.violations)}")
+        
+        # Test 8: Integration with recommendation system
+        print("8. Testing integration with recommendations...")
+        try:
+            recommender = HybridRecommender(self.conn)
+            
+            # Create constrained recommendation request
+            request = RecommendationRequest(
+                top_k=5,
+                pieces_max=800,
+                age_min=8,
+                required_themes=["City"],
+                price_max=120.0
+            )
+            
+            recommendations, constraint_result = recommender.get_recommendations_from_request(request)
+            print(f"   🤖 Generated {len(recommendations)} constrained recommendations")
+            
+            if recommendations:
+                print("   📦 Sample constrained recommendations:")
+                for i, rec in enumerate(recommendations[:3]):
+                    print(f"     {i+1}. {rec.name} ({rec.num_parts} pieces, {rec.theme_name})")
+                    
+        except Exception as e:
+            print(f"   ⚠️ Integration test skipped: {e}")
+        
+        print("   ✅ Hard constraint filtering tests completed")
+    
+    def test_constraint_performance_with_realistic_data(self):
+        """Test constraint performance with realistic user data"""
+        print("\n⚡ Testing Constraint Performance with Realistic Data...")
+        
+        import time
+        
+        # Test constraint performance on different dataset sizes
+        test_scenarios = [
+            {
+                "name": "Light constraints",
+                "constraints": [
+                    HardConstraint(ConstraintType.PIECES_MAX, 1000),
+                    HardConstraint(ConstraintType.YEAR_MIN, 2010)
+                ]
+            },
+            {
+                "name": "Medium constraints", 
+                "constraints": [
+                    HardConstraint(ConstraintType.PIECES_MIN, 100),
+                    HardConstraint(ConstraintType.PIECES_MAX, 800),
+                    HardConstraint(ConstraintType.THEMES_REQUIRED, ["City", "Creator", "Star Wars"]),
+                    HardConstraint(ConstraintType.YEAR_MIN, 2015)
+                ]
+            },
+            {
+                "name": "Heavy constraints",
+                "constraints": self.constraint_filter.create_constraint_set(
+                    price_max=200.0,
+                    price_min=30.0,
+                    pieces_min=200,
+                    pieces_max=1500,
+                    age_min=8,
+                    required_themes=["City", "Creator", "Technic"],
+                    excluded_themes=["Duplo", "Baby"],
+                    year_min=2018,
+                    max_complexity="moderate"
+                )
+            }
+        ]
+        
+        for scenario in test_scenarios:
+            print(f"\n   Testing: {scenario['name']}")
+            
+            # Run multiple times for average
+            times = []
+            results_count = []
+            
+            for _ in range(3):
+                start_time = time.time()
+                result = self.constraint_filter.apply_constraints(scenario['constraints'])
+                end_time = time.time()
+                
+                times.append((end_time - start_time) * 1000)  # Convert to ms
+                results_count.append(len(result.valid_set_nums))
+            
+            avg_time = sum(times) / len(times)
+            avg_results = sum(results_count) / len(results_count)
+            
+            print(f"   ⏱️ Average time: {avg_time:.2f}ms")
+            print(f"   📊 Average results: {avg_results:.0f} sets")
+            print(f"   🔒 Constraints applied: {len(scenario['constraints'])}")
+        
+        # Test caching performance
+        print("\n   Testing constraint caching...")
+        cache_constraints = [
+            HardConstraint(ConstraintType.THEMES_REQUIRED, ["Star Wars"])
+        ]
+        
+        # First run (no cache)
+        start_time = time.time()
+        result1 = self.constraint_filter.apply_constraints(cache_constraints)
+        time1 = (time.time() - start_time) * 1000
+        
+        # Second run (with cache)
+        start_time = time.time()
+        result2 = self.constraint_filter.apply_constraints(cache_constraints)
+        time2 = (time.time() - start_time) * 1000
+        
+        print(f"   🏃 First run: {time1:.2f}ms")
+        print(f"   🏃 Cached run: {time2:.2f}ms")
+        if time1 > 0:
+            print(f"   📈 Cache improvement: {((time1 - time2) / time1 * 100):.1f}%")
+        else:
+            print(f"   📈 Cache improvement: N/A (operation too fast to measure)")
+        
+        # Performance report
+        performance_report = self.constraint_filter.get_performance_report()
+        print(f"\n   📊 Overall Performance Report:")
+        print(f"     Total operations: {performance_report.get('operation_count', 0)}")
+        print(f"     Average filter time: {performance_report.get('average_filter_time_ms', 0):.2f}ms")
+        print(f"     Total constraints applied: {performance_report.get('total_constraints_applied', 0)}")
+    
+    def test_realistic_constraint_scenarios(self):
+        """Test realistic user constraint scenarios"""
+        print("\n🎯 Testing Realistic User Constraint Scenarios...")
+        
+        scenarios = [
+            {
+                "name": "Budget-conscious parent",
+                "description": "Parent looking for age-appropriate sets under budget",
+                "constraints": self.constraint_filter.create_constraint_set(
+                    price_max=50.0,
+                    age_min=6,
+                    pieces_max=500,
+                    excluded_themes=["Adult Welcome"],
+                    max_complexity="simple"
+                )
+            },
+            {
+                "name": "Teenage Star Wars fan",
+                "description": "Teen wanting complex Star Wars sets",
+                "constraints": self.constraint_filter.create_constraint_set(
+                    required_themes=["Star Wars"],
+                    age_min=10,
+                    pieces_min=500,
+                    max_complexity="complex"
+                )
+            },
+            {
+                "name": "Adult collector", 
+                "description": "Adult collector seeking premium display sets",
+                "constraints": self.constraint_filter.create_constraint_set(
+                    price_min=100.0,
+                    pieces_min=1000,
+                    age_min=16,
+                    year_min=2020,
+                    required_themes=["Creator Expert", "Architecture", "Technic"]
+                )
+            },
+            {
+                "name": "Gift buyer",
+                "description": "Someone buying a gift with specific requirements",
+                "constraints": self.constraint_filter.create_constraint_set(
+                    price_max=80.0,
+                    price_min=25.0,
+                    age_min=8,
+                    pieces_min=200,
+                    pieces_max=800,
+                    required_themes=["City", "Friends", "Creator"]
+                )
+            },
+            {
+                "name": "Space enthusiast",
+                "description": "Fan looking for space-themed sets",
+                "constraints": self.constraint_filter.create_constraint_set(
+                    required_themes=["Space", "City"],  # City often has space police
+                    pieces_min=100,
+                    excluded_themes=["Duplo"]
+                )
+            }
+        ]
+        
+        for scenario in scenarios:
+            print(f"\n   🎭 Scenario: {scenario['name']}")
+            print(f"      📝 {scenario['description']}")
+            
+            result = self.constraint_filter.apply_constraints(scenario['constraints'])
+            
+            print(f"      ✅ Found {len(result.valid_set_nums)} matching sets")
+            print(f"      🔒 Applied {len(scenario['constraints'])} constraints")
+            
+            if result.violations:
+                print(f"      ⚠️ {len(result.violations)} constraint violations")
+                for violation in result.violations[:1]:  # Show first violation
+                    print(f"        🚫 {violation.message}")
+                    if violation.suggested_alternatives:
+                        print(f"        💡 Try: {violation.suggested_alternatives[0]}")
+            
+            # Show sample results if available
+            if result.valid_set_nums:
+                cursor = self.conn.cursor(cursor_factory=RealDictCursor)
+                cursor.execute("""
+                    SELECT s.set_num, s.name, s.num_parts, s.year, t.name as theme_name
+                    FROM sets s
+                    LEFT JOIN themes t ON s.theme_id = t.id  
+                    WHERE s.set_num = ANY(%s)
+                    ORDER BY s.year DESC, s.num_parts DESC
+                    LIMIT 3
+                """, [result.valid_set_nums[:10]])  # Sample from first 10
+                
+                sample_sets = cursor.fetchall()
+                if sample_sets:
+                    print(f"      📦 Sample matches:")
+                    for set_info in sample_sets:
+                        print(f"        • {set_info['name']} ({set_info['num_parts']} pieces, {set_info['year']}, {set_info['theme_name']})")
+        
+        print("\n   ✅ Realistic scenario testing completed")
+    
     def run_full_test_suite(self):
         """Run the complete test suite"""
         print("🧪 LEGO Recommendation System - Full Test Suite")
@@ -395,7 +706,16 @@ class RecommendationSystemTester:
         # 4. Test hybrid approach
         self.test_hybrid_recommendations()
         
-        # 5. Performance benchmarking
+        # 5. Test hard constraint filtering
+        self.test_hard_constraint_filtering()
+        
+        # 6. Test constraint performance
+        self.test_constraint_performance_with_realistic_data()
+        
+        # 7. Test realistic constraint scenarios  
+        self.test_realistic_constraint_scenarios()
+        
+        # 8. Performance benchmarking
         self.benchmark_performance()
         
         # 6. Final analysis
@@ -411,7 +731,8 @@ class RecommendationSystemTester:
         print("\n🚀 PRODUCTION READINESS:")
         print("   • Content-based recommendations: READY")
         print("   • Collaborative filtering: READY (with simulated data)")
-        print("   • Hybrid approach: READY")
+        print("   • Hard constraint filtering: READY")
+        print("   • Hybrid approach: READY") 
         print("   • Performance: OPTIMIZED")
         print("   • Monitoring: CONFIGURED")
 

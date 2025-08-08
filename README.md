@@ -6,7 +6,8 @@ A production-ready, sophisticated recommendation system that helps LEGO enthusia
 
 ### 🤖 Advanced AI & Machine Learning
 - **🧠 Hybrid ML Engine**: Content-based + Collaborative filtering + Deep learning + Smart fallbacks
-- **🔥 Advanced NLP Processing**: HuggingFace Transformers + LangChain integration for sophisticated language understanding
+- **� Hard Constraint Filtering**: Absolute, non-negotiable requirement enforcement with intelligent violation detection
+- **�🔥 Advanced NLP Processing**: HuggingFace Transformers + LangChain integration for sophisticated language understanding
 - **🤖 HuggingFace Integration**: Local AutoTokenizer, AutoModelForCausalLM, and SentenceTransformer models
 - **🗣️ Conversational AI**: Multi-turn dialogue with enhanced context awareness and memory
 - **🧠 Enhanced Conversation Memory**: Persistent conversation context with advanced user preference learning
@@ -795,12 +796,19 @@ CACHE_CONFIG = {
 
 ## 📚 Documentation
 
+- [Hard Constraint Filtering](docs/HARD_CONSTRAINT_FILTERING.md) - Hard constraint filtering system documentation
+- [Enhanced Theme Detection](docs/ENHANCED_THEME_DETECTION.md) - Comprehensive theme detection system
+- [Production Status](docs/PRODUCTION_STATUS.md) - Production readiness checklist
+- [HuggingFace Migration](docs/HUGGINGFACE_MIGRATION_COMPLETE.md) - AI integration details
+- [Docker Integration](docs/DOCKER_INTEGRATION_SUMMARY.md) - Docker deployment guide
+- [Gradio Interface](docs/GRADIO_README.md) - Web interface documentation
 - [Conversation Memory](docs/conversation_memory.md) - Conversation memory system implementation guide
 - [API Documentation](http://localhost:8000/docs) - Interactive OpenAPI documentation (when running)
 - [Examples](examples/) - Complete API demonstration scripts
   - `example_client.py` - Basic API usage examples
   - `nl_demo_script.py` - Natural language processing demo
   - `conversation_memory_demo.py` - Conversation memory examples
+  - `hard_constraint_demo.py` - Hard constraint filtering examples
 - [Tests](tests/) - Comprehensive test suite with examples
 
 ## 🔧 Troubleshooting

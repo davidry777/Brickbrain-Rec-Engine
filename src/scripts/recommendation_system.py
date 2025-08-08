@@ -11,6 +11,13 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
 from datetime import datetime
 
+# Import hard constraint filtering system
+from hard_constraint_filter import (
+    HardConstraintFilter, HardConstraint, ConstraintResult,
+    ConstraintType, ConstraintSeverity, create_budget_constraints,
+    create_age_appropriate_constraints, create_size_constraints
+)
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,6 +33,36 @@ class RecommendationResult:
     year: int
     num_parts: int
     img_url: Optional[str] = None
+    constraint_violations: Optional[List[str]] = None  # Added for hard constraint feedback
+
+@dataclass
+class RecommendationRequest:
+    """Enhanced recommendation request with hard constraints"""
+    user_id: Optional[int] = None
+    liked_set: Optional[str] = None
+    top_k: int = 10
+    
+    # Hard constraints
+    price_max: Optional[float] = None
+    price_min: Optional[float] = None
+    pieces_max: Optional[int] = None
+    pieces_min: Optional[int] = None
+    age_min: Optional[int] = None
+    age_max: Optional[int] = None
+    year_min: Optional[int] = None
+    year_max: Optional[int] = None
+    required_themes: Optional[List[str]] = None
+    excluded_themes: Optional[List[str]] = None
+    max_complexity: Optional[str] = None
+    min_complexity: Optional[str] = None
+    must_be_available: bool = False
+    exclude_owned: bool = False
+    exclude_wishlisted: bool = False
+    
+    # Soft preferences (for ranking/scoring)
+    preferred_themes: Optional[List[str]] = None
+    preferred_complexity: Optional[str] = None
+    budget_preference: Optional[float] = None
 
 @dataclass
 class UserProfile:
@@ -154,12 +191,13 @@ class ContentBasedRecommender:
         self.feat_matrix = np.hstack([scaled_feats, size_dummies.values])
         logger.info(f"Feature matrix shape: {self.feat_matrix.shape}")
 
-    def get_similar_sets(self, set_num: str, top_k: int = 10) -> List[RecommendationResult]:
+    def get_similar_sets(self, set_num: str, top_k: int = 10, valid_set_filter: Optional[List[str]] = None) -> List[RecommendationResult]:
         """
-        Get sets similar to the given set
+        Get sets similar to the given set with optional constraint filtering
 
         :param set_num: The set number to find similar sets for
         :param top_k: Number of similar sets to return
+        :param valid_set_filter: Optional list of valid set numbers to filter results
         :return: List of RecommendationResult objects
         """
         if self.feat_matrix is None:
@@ -175,12 +213,22 @@ class ContentBasedRecommender:
         target_feats = self.feat_matrix[target_idx].reshape(1, -1)
         similarities = cosine_similarity(target_feats, self.feat_matrix)[0]
 
-        # Extract top similar sets (excluding target set)
-        sim_idxs = np.argsort(similarities)[::-1][1:top_k+1]
-
+        # Get all similar sets (excluding target set)
+        all_similar_indices = np.argsort(similarities)[::-1][1:]
+        
         recommendations = []
-        for i in sim_idxs:
+        added_count = 0
+        
+        for i in all_similar_indices:
+            if added_count >= top_k:
+                break
+                
             set_data = self.set_feat.iloc[i]
+            
+            # Apply constraint filter if provided
+            if valid_set_filter and set_data['set_num'] not in valid_set_filter:
+                continue
+                
             score = similarities[i]
             # Generate reasons for content-based recommendations
             reasons = self._generate_content_reasons(set_data, set_num)
@@ -195,6 +243,8 @@ class ContentBasedRecommender:
                 num_parts=int(set_data['num_parts']),
                 img_url=set_data['img_url']
             ))
+            
+            added_count += 1
 
         return recommendations
     
@@ -358,12 +408,13 @@ class CollaborativeFilteringRecommender:
 
         logger.info(f"Trained SVD model with {n_components} components")
 
-    def get_recommendations(self, user_id: str, top_k: int = 10) -> List[RecommendationResult]:
+    def get_recommendations(self, user_id: str, top_k: int = 10, valid_set_filter: Optional[List[str]] = None) -> List[RecommendationResult]:
         """
-        Get recommendations for a user based on collaborative filtering
+        Get recommendations for a user based on collaborative filtering with optional constraint filtering
 
         :param user_id: The user ID to get recommendations for
         :param top_k: Number of recommendations to return
+        :param valid_set_filter: Optional list of valid set numbers to filter results
         :return: List of RecommendationResult objects
         """
         if self.svd_model is None:
@@ -372,11 +423,11 @@ class CollaborativeFilteringRecommender:
         # If SVD model couldn't be trained, use fallback
         if self.svd_model is None:
             logger.info("Using fallback recommendations due to insufficient data")
-            return self._cold_start_recommendations(top_k)
+            return self._cold_start_recommendations(top_k, valid_set_filter)
 
         if user_id not in self.user_lookup:
             logger.warning(f"User {user_id} not found in user lookup")
-            return self._cold_start_recommendations(top_k)
+            return self._cold_start_recommendations(top_k, valid_set_filter)
 
         user_idx = self.user_lookup[user_id]
         
@@ -390,9 +441,20 @@ class CollaborativeFilteringRecommender:
         user_rated_items = self.user_item_matrix.iloc[user_idx]
         rated_indices = user_rated_items[user_rated_items > 0].index
         
-        # Get item scores and filter out already rated items
-        item_scores = [(idx, scores[idx]) for idx in range(len(scores)) 
-                      if self.reverse_item_lookup[idx] not in rated_indices]
+        # Get item scores and filter out already rated items and apply constraints
+        item_scores = []
+        for idx in range(len(scores)):
+            set_num = self.reverse_item_lookup[idx]
+            
+            # Skip already rated items
+            if set_num in rated_indices:
+                continue
+                
+            # Apply constraint filter if provided
+            if valid_set_filter and set_num not in valid_set_filter:
+                continue
+                
+            item_scores.append((idx, scores[idx]))
         
         # Sort by score and get top K
         item_scores.sort(key=lambda x: x[1], reverse=True)
@@ -420,8 +482,8 @@ class CollaborativeFilteringRecommender:
 
         return recommendations
     
-    def _cold_start_recommendations(self, top_k: int) -> List[RecommendationResult]:
-        """Handle cold start problem for new users"""
+    def _cold_start_recommendations(self, top_k: int, valid_set_filter: Optional[List[str]] = None) -> List[RecommendationResult]:
+        """Handle cold start problem for new users with optional constraint filtering"""
         # Recommend popular items (highest average ratings)
         popular_query = """
         SELECT s.set_num, s.name, s.year, s.num_parts, s.img_url, t.name as theme_name,
@@ -430,14 +492,26 @@ class CollaborativeFilteringRecommender:
         LEFT JOIN themes t ON s.theme_id = t.id
         LEFT JOIN user_interactions ui ON s.set_num = ui.set_num
         WHERE ui.rating IS NOT NULL
+        """
+        
+        params = []
+        
+        # Add constraint filter if provided
+        if valid_set_filter:
+            popular_query += " AND s.set_num = ANY(%s)"
+            params.append(valid_set_filter)
+        
+        popular_query += """
         GROUP BY s.set_num, s.name, s.year, s.num_parts, s.img_url, t.name
-        HAVING COUNT(ui.rating) >= 5
+        HAVING COUNT(ui.rating) >= 3
         ORDER BY avg_rating DESC, rating_count DESC
         LIMIT %s
         """
         
+        params.append(top_k)
+        
         try:
-            popular_sets = pd.read_sql(popular_query, self.dbcon, params=[top_k])
+            popular_sets = pd.read_sql(popular_query, self.dbcon, params=params)
             
             recommendations = []
             for _, row in popular_sets.iterrows():
@@ -456,25 +530,7 @@ class CollaborativeFilteringRecommender:
             
         except Exception as e:
             logger.error(f"Error getting popular recommendations: {e}")
-            return self._get_recent_popular_sets(top_k)
-            recommendations = []
-            
-            for _, row in popular_sets.iterrows():
-                recommendations.append(RecommendationResult(
-                    set_num=row['set_num'],
-                    name=row['name'],
-                    score=float(row['avg_rating']),
-                    reasons=[f"Popular choice (avg rating: {row['avg_rating']:.1f})"],
-                    theme_name=row['theme_name'],
-                    year=int(row['year']),
-                    num_parts=int(row['num_parts']),
-                    img_url=row['img_url']
-                ))
-                
-            return recommendations
-        except:
-            # Fallback to recent popular sets
-            return self._get_recent_popular_sets(top_k)
+            return self._get_recent_popular_sets(top_k, valid_set_filter)
     
     def _get_set_details(self, set_num: str) -> Optional[Dict]:
         """Get set details from database"""
@@ -493,19 +549,27 @@ class CollaborativeFilteringRecommender:
             logger.error(f"Error getting set details for {set_num}: {e}")
             return None
 
-    def _get_recent_popular_sets(self, top_k: int) -> List[RecommendationResult]:
-        """Fallback method to get recent popular sets"""
+    def _get_recent_popular_sets(self, top_k: int, valid_set_filter: Optional[List[str]] = None) -> List[RecommendationResult]:
+        """Fallback method to get recent popular sets with optional constraint filtering"""
         query = """
         SELECT s.set_num, s.name, s.year, s.num_parts, s.img_url, t.name as theme_name
         FROM sets s
         LEFT JOIN themes t ON s.theme_id = t.id
         WHERE s.year >= 2020 AND s.num_parts BETWEEN 100 AND 1000
-        ORDER BY s.year DESC, s.num_parts DESC
-        LIMIT %s
         """
         
+        params = []
+        
+        # Add constraint filter if provided
+        if valid_set_filter:
+            query += " AND s.set_num = ANY(%s)"
+            params.append(valid_set_filter)
+        
+        query += " ORDER BY s.year DESC, s.num_parts DESC LIMIT %s"
+        params.append(top_k)
+        
         try:
-            popular_sets = pd.read_sql(query, self.dbcon, params=[top_k])
+            popular_sets = pd.read_sql(query, self.dbcon, params=params)
             recommendations = []
             
             for _, row in popular_sets.iterrows():
@@ -529,49 +593,198 @@ class CollaborativeFilteringRecommender:
         
 class HybridRecommender:
     """
-    Hybrid recommender combining content-based and collaborative filtering.
+    Hybrid recommender combining content-based and collaborative filtering with hard constraint support.
+    
+    This enhanced version applies hard constraints BEFORE generating recommendations to ensure
+    all returned results meet absolute requirements.
     """
     
     def __init__(self, dbcon):
         self.dbcon = dbcon
         self.content_recommender = ContentBasedRecommender(dbcon)
         self.collaborative_recommender = CollaborativeFilteringRecommender(dbcon)
+        self.constraint_filter = HardConstraintFilter(dbcon)  # New hard constraint filter
 
         # Weights for combining recommendations
         self.content_weight = 0.4
         self.collaborative_weight = 0.6
 
-    def get_recommendations(self, user_id: Optional[int] = None, liked_set: Optional[str] = None, top_k: int = 10) -> List[RecommendationResult]:
+    def get_recommendations(self, 
+                          user_id: Optional[int] = None, 
+                          liked_set: Optional[str] = None, 
+                          top_k: int = 10,
+                          constraints: Optional[List[HardConstraint]] = None) -> Tuple[List[RecommendationResult], ConstraintResult]:
         """
-        Get hybrid recommendations for a user
+        Get hybrid recommendations with hard constraint filtering
 
         :param user_id: The user ID to get recommendations for
         :param liked_set: A set number that the user likes (for content-based filtering)
         :param top_k: Number of recommendations to return
-        :return: List of RecommendationResult objects
+        :param constraints: List of hard constraints to apply
+        :return: Tuple of (recommendations, constraint_result)
         """
+        logger.info(f"🎯 Getting recommendations with {len(constraints or [])} hard constraints")
+        
+        # Step 1: Apply hard constraints first to get valid candidate sets
+        constraint_result = None
+        valid_set_nums = None
+        
+        if constraints:
+            constraint_result = self.constraint_filter.apply_constraints(constraints)
+            valid_set_nums = constraint_result.valid_set_nums
+            
+            if not valid_set_nums:
+                logger.warning("❌ No sets meet the specified hard constraints")
+                return [], constraint_result
+            
+            logger.info(f"✅ {len(valid_set_nums)} sets meet hard constraints")
+        
+        # Step 2: Generate recommendations from the valid set pool
         content_recs = []
         collaborative_recs = []
         
-        # Get content-based recommendations
+        # Get content-based recommendations (filtered by constraints)
         if liked_set:
-            content_recs = self.content_recommender.get_similar_sets(liked_set, top_k * 2)
+            content_recs = self.content_recommender.get_similar_sets(
+                liked_set, top_k * 2, valid_set_filter=valid_set_nums
+            )
         
-        # Get collaborative filtering recommendations
+        # Get collaborative filtering recommendations (filtered by constraints)
         if user_id:
-            collaborative_recs = self.collaborative_recommender.get_recommendations(user_id, top_k * 2)
+            collaborative_recs = self.collaborative_recommender.get_recommendations(
+                user_id, top_k * 2, valid_set_filter=valid_set_nums
+            )
         
-        # If only one type is available, return that
+        # Handle empty results
         if not content_recs and collaborative_recs:
-            return collaborative_recs[:top_k]
+            final_recs = collaborative_recs[:top_k]
         elif content_recs and not collaborative_recs:
-            return content_recs[:top_k]
+            final_recs = content_recs[:top_k]
         elif not content_recs and not collaborative_recs:
-            # Cold start - return popular sets
-            return self.collaborative_recommender._get_recent_popular_sets(top_k)
+            # Cold start with constraints
+            final_recs = self._get_constrained_popular_sets(top_k, valid_set_nums)
+        else:
+            # Combine recommendations
+            final_recs = self._combine_recommendations(content_recs, collaborative_recs, top_k)
         
-        # Combine recommendations
-        return self._combine_recommendations(content_recs, collaborative_recs, top_k)
+        # Step 3: Add constraint feedback to results
+        if constraint_result and constraint_result.violations:
+            for rec in final_recs:
+                rec.constraint_violations = [v.message for v in constraint_result.violations]
+        
+        logger.info(f"🎉 Returning {len(final_recs)} constrained recommendations")
+        
+        return final_recs, constraint_result
+
+    def get_recommendations_from_request(self, request: RecommendationRequest) -> Tuple[List[RecommendationResult], ConstraintResult]:
+        """
+        Get recommendations from a RecommendationRequest object
+        
+        :param request: RecommendationRequest with all parameters
+        :return: Tuple of (recommendations, constraint_result)
+        """
+        try:
+            # Create hard constraints from request
+            constraints = self.constraint_filter.create_constraint_set(
+                price_max=request.price_max,
+                price_min=request.price_min,
+                pieces_max=request.pieces_max,
+                pieces_min=request.pieces_min,
+                age_min=request.age_min,
+                age_max=request.age_max,
+                year_min=request.year_min,
+                year_max=request.year_max,
+                required_themes=request.required_themes,
+                excluded_themes=request.excluded_themes,
+                max_complexity=request.max_complexity,
+                min_complexity=request.min_complexity,
+                must_be_available=request.must_be_available,
+                exclude_owned=request.exclude_owned,
+                exclude_wishlisted=request.exclude_wishlisted,
+                user_id=request.user_id
+            )
+        except Exception as e:
+            logger.error(f"Failed to create constraints: {e}")
+            error_result = ConstraintResult(
+                valid_set_nums=[],
+                violations=[],
+                total_candidates=0,
+                total_valid=0
+            )
+            return [], error_result
+
+        return self.get_recommendations(
+            user_id=request.user_id,
+            liked_set=request.liked_set,
+            top_k=request.top_k,
+            constraints=constraints
+        )
+
+    def _get_constrained_popular_sets(self, top_k: int, valid_set_nums: Optional[List[str]] = None) -> List[RecommendationResult]:
+        """
+        Get popular recommendations filtered by constraints
+        
+        :param top_k: Number of recommendations to return
+        :param valid_set_nums: Optional list of valid set numbers to choose from
+        :return: List of popular RecommendationResult objects
+        """
+        base_query = """
+        SELECT s.set_num, s.name, s.year, s.num_parts, s.img_url, t.name as theme_name,
+               COALESCE(AVG(ui.rating), 0) as avg_rating, 
+               COUNT(ui.rating) as rating_count,
+               s.year as popularity_boost
+        FROM sets s
+        LEFT JOIN themes t ON s.theme_id = t.id
+        LEFT JOIN user_interactions ui ON s.set_num = ui.set_num AND ui.rating IS NOT NULL
+        WHERE s.num_parts > 0
+        """
+        
+        params = []
+        
+        # Add constraint filter if provided
+        if valid_set_nums:
+            placeholders = ','.join(['%s'] * len(valid_set_nums))
+            base_query += f" AND s.set_num IN ({placeholders})"
+            params.extend(valid_set_nums)
+        
+        base_query += """
+        GROUP BY s.set_num, s.name, s.year, s.num_parts, s.img_url, t.name
+        ORDER BY 
+            CASE WHEN COUNT(ui.rating) >= 3 THEN AVG(ui.rating) ELSE 0 END DESC,
+            COUNT(ui.rating) DESC,
+            s.year DESC
+        LIMIT %s
+        """
+        
+        params.append(top_k)
+        
+        try:
+            popular_sets = pd.read_sql(base_query, self.dbcon, params=params)
+            
+            recommendations = []
+            for _, row in popular_sets.iterrows():
+                reasons = ["Popular choice"]
+                if row['rating_count'] > 0:
+                    reasons.append(f"Avg rating: {row['avg_rating']:.1f} ({row['rating_count']} reviews)")
+                else:
+                    reasons.append("Recent release")
+                
+                recommendations.append(RecommendationResult(
+                    set_num=row['set_num'],
+                    name=row['name'],
+                    score=float(row['avg_rating']) if row['rating_count'] > 0 else 0.5,
+                    reasons=reasons,
+                    theme_name=row['theme_name'],
+                    year=int(row['year']),
+                    num_parts=int(row['num_parts']),
+                    img_url=row['img_url']
+                ))
+            
+            return recommendations
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting constrained popular sets: {e}")
+            return []
     
     def _combine_recommendations(self, content_recs: List[RecommendationResult], collaborative_recs: List[RecommendationResult], top_k: int) -> List[RecommendationResult]:
         """
