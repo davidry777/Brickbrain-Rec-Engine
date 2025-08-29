@@ -1,4 +1,4 @@
-# 🧱 LEGO Recommendation System
+# 🧱 Brickbrain LEGO Recommendation System
 
 A production-ready, sophisticated recommendation system that helps LEGO enthusiasts discover sets they'll love based on their preferences, building history, and advanced ML algorithms.
 
